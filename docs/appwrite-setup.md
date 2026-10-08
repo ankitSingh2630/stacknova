@@ -1,0 +1,111 @@
+# Appwrite frontend foundation — Phase 2
+
+Phase 2 prepares the Appwrite Web SDK for later frontend integration. The Appwrite database and the `leads` and `lead_notes` tables already exist in the Console. This phase does not create tables, alter permissions, authenticate users, or perform database operations.
+
+The admin screens continue to use `MockLeadsProvider` and `lib/admin/mock-data.ts`. The public website and `components/Contact.tsx` remain unchanged.
+
+## SDK and configuration
+
+The project uses the `appwrite` Web SDK, currently installed at version `28.1.0`. Install the project's locked dependencies with `npm ci` when setting up another checkout.
+
+- `lib/appwrite/config.ts` reads the six public environment variables into `appwriteConfig`.
+- `lib/appwrite/client.ts` creates and exports one `Client`, one `Account`, and one `TablesDB` instance. Both services share the same client.
+- No screen imports these modules yet. Initialization does not call any Appwrite API or subscribe to realtime events.
+
+The integration uses the current `TablesDB` API for tables and rows.
+
+## Environment variables
+
+Keep the existing `.env.local` values local. Do not overwrite that file with the empty example. For a new checkout, use `.env.example` as the template and fill in values from your own Appwrite Console.
+
+| Variable | Purpose |
+| --- | --- |
+| `NEXT_PUBLIC_APPWRITE_ENDPOINT` | Project API endpoint, including the `/v1` path. |
+| `NEXT_PUBLIC_APPWRITE_PROJECT_ID` | Appwrite project ID. |
+| `NEXT_PUBLIC_APPWRITE_DATABASE_ID` | Database containing the existing tables. |
+| `NEXT_PUBLIC_APPWRITE_LEADS_TABLE_ID` | ID of the `leads` table. |
+| `NEXT_PUBLIC_APPWRITE_NOTES_TABLE_ID` | ID of the `lead_notes` table. |
+| `NEXT_PUBLIC_APPWRITE_ADMIN_TEAM_ID` | Team ID reserved for future administrator access. |
+
+Populate these variables before importing the client in a future phase. Configuration defaults to empty strings when a variable is missing; it does not invent a project or endpoint. The SDK requires a valid HTTP(S) endpoint when the client module is initialized.
+
+All `NEXT_PUBLIC_` values are public frontend configuration and can be included in browser assets once used. Never put an Appwrite API key, session secret, password, or other privileged credential in these variables. Table IDs and team IDs do not grant access by themselves; Appwrite permissions enforce access.
+
+Next.js replaces direct `NEXT_PUBLIC_` environment references during the build. Restart the development server after environment changes, and rebuild the static export before deploying changed configuration.
+
+For future browser requests, register `localhost` and the production hostname as Web platforms in the Appwrite Console. Phase 2 does not make a connection or verify those platform settings.
+
+## Database structure
+
+### leads table
+
+| Column | Purpose |
+| --- | --- |
+| `name` | Enquirer's name. |
+| `email` | Contact email address. |
+| `phone` | Contact phone number. |
+| `company` | Company name. |
+| `service` | Requested service. |
+| `message` | Enquiry or project description. |
+| `source` | Enquiry source. |
+| `status` | Lead pipeline status. |
+| `deletedAt` | Soft-deletion timestamp; empty for active leads. |
+
+Supported status values:
+
+- `New`
+- `Contacted`
+- `In Progress`
+- `Converted`
+- `Closed`
+
+Use Appwrite's system metadata for `$id`, `$createdAt`, and `$updatedAt`. Do not add duplicate custom columns for these fields.
+
+Current leads indexes:
+
+- `status`
+- `service`
+- `deletedAt`
+
+### lead_notes table
+
+| Column | Purpose |
+| --- | --- |
+| `leadId` | ID of the lead the note belongs to. |
+| `note` | Private note text. |
+
+Notes also use Appwrite's `$id`, `$createdAt`, and `$updatedAt` system metadata.
+
+## Security
+
+Both tables currently remain private. Do not grant public access at either table or row level:
+
+- No public read.
+- No public create.
+- No public update.
+- No public delete.
+- Notes remain private.
+
+Public enquiry creation will later go through an Appwrite Function. Any privileged credentials for that function must remain in its server-side environment, never in frontend variables.
+
+Admins will later authenticate using Appwrite Authentication. Future administrator access must be restricted to the designated admin team through Appwrite permissions. The exported `account` instance is only preparation; no login, session lookup, or team check is implemented in Phase 2.
+
+## Static export and phase boundary
+
+Keep `output: 'export'` in `next.config.mjs`. The Web SDK foundation does not require a Next.js server, API routes, server actions, or runtime SSR. There is no Appwrite request during this phase, including during the production build.
+
+Build with:
+
+```sh
+npm run build
+```
+
+On Windows PowerShell, use `npm.cmd run build` if the execution policy blocks `npm.ps1`. The static website is emitted to `dist/`.
+
+Stop after this foundation. Authentication, lead fetching, creation, updates, notes persistence, deletion, Appwrite Functions, and Resend are outside Phase 2.
+
+## References
+
+- [Appwrite Web SDK setup](https://appwrite.io/docs/quick-starts/web)
+- [Appwrite TablesDB Web SDK reference](https://appwrite.io/docs/references/cloud/client-web/tablesDB)
+- [Next.js 14 environment variables](https://nextjs.org/docs/14/app/building-your-application/configuring/environment-variables)
