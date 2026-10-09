@@ -5,9 +5,11 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import AdminIcon from "./AdminIcon";
 import styles from "@/app/admin/admin.module.css";
+import { useAdminAuth } from "./AdminAuthProvider";
 
 export default function AdminNavbar() {
   const pathname = usePathname();
+  const { state, logout, loggingOut, logoutError } = useAdminAuth();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -26,7 +28,7 @@ export default function AdminNavbar() {
   const links = <>
     <Link href="/admin/" className={styles.navLink} aria-current={!isLeads && !isLead ? "page" : undefined} onClick={() => setOpen(false)}><AdminIcon name="grid" />Dashboard</Link>
     <Link href="/admin/leads/" className={styles.navLink} aria-current={isLeads || isLead ? "page" : undefined} onClick={() => setOpen(false)}><AdminIcon name="leads" />Leads</Link>
-    <Link href="/admin/login/" className={styles.navLink} onClick={() => setOpen(false)}><AdminIcon name="logout" />Logout</Link>
+    <button type="button" className={styles.navLink + " " + styles.logoutButton} disabled={loggingOut} onClick={() => void logout()}><AdminIcon name="logout" />{loggingOut ? "Signing out…" : "Logout"}</button>
   </>;
   return <>
     <header className={styles.navbar}>
@@ -34,11 +36,12 @@ export default function AdminNavbar() {
         {isLead && <Link href="/admin/leads/" aria-label="Back to leads"><AdminIcon name="back" /></Link>}
         <Link href="/admin/" className={styles.brand} aria-label="StackNova admin dashboard"><span className={styles.brandMark}><AdminIcon name="code" size={22} /></span><span><span className={styles.brandName}>{isLead ? "Lead Details" : "StackNova"}</span>{!isLead && <span className={styles.brandSub}>{label}</span>}</span></Link>
         <nav className={styles.topLinks} aria-label="Admin navigation">{links}</nav>
-        <span className={styles.avatar} aria-label="Demo administrator">SN</span>
+        <span className={styles.avatar} aria-label={state.status === "authorized" ? `Signed in as ${state.user.name || state.user.email}` : "Administrator"}>SN</span>
         <button ref={toggleRef} className={styles.iconButton + " " + styles.menuButton} aria-label={open ? "Close navigation" : "Open navigation"} aria-expanded={open} aria-controls="admin-mobile-menu" onClick={() => setOpen(value => !value)}><AdminIcon name={open ? "close" : "menu"} /></button>
       </div>
       {open && <div ref={menuRef} id="admin-mobile-menu" className={styles.mobileMenu}><nav aria-label="Mobile admin navigation">{links}</nav></div>}
     </header>
+    {logoutError && <p className={styles.logoutError} role="alert" aria-live="polite">{logoutError}</p>}
     {!isLeads && !isLead && <nav className={styles.bottomNav} aria-label="Admin quick navigation">{links}</nav>}
   </>;
 }
