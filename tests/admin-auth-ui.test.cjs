@@ -64,6 +64,21 @@ test("provider starts loading, restores centrally, and supplies authorized ident
   assert.equal(ui.render().props.value.state.status, "authorized");
 });
 
+test("central data-failure recheck keeps an authorized workspace mounted while checking, without a loading/remount loop", async () => {
+  const pending = deferred(); let requests = 0;
+  const ui = harness("components/admin/AdminAuthProvider.tsx", { auth: {
+    restore: () => ++requests === 1 ? Promise.resolve(authorized) : pending.promise,
+  } });
+  ui.render(); ui.flush(); await tick();
+  const rechecking = ui.render().props.value.recheckSession();
+  assert.equal(ui.render().props.value.state.status, "authorized");
+  await ui.render().props.value.recheckSession();
+  assert.equal(requests, 2, "concurrent central rechecks are suppressed");
+  pending.resolve(authorized); await rechecking;
+  assert.equal(ui.render().props.value.state.status, "authorized");
+  ui.flush(); await tick(); assert.equal(requests, 2);
+});
+
 test("provider ignores stale restoration after a newer login", async () => {
   const pending = deferred(); let staleDenied;
   const ui = harness("components/admin/AdminAuthProvider.tsx", { auth: {
@@ -225,9 +240,9 @@ test("navbar uses logout button with shared pending/error feedback and real iden
   assert.equal(ui.find(tree, (node) => node.props?.role === "alert").props.children, messages.logout);
   assert.ok(renderToStaticMarkup(tree).includes("Signed in as Test Admin"));
 });
-test("mock provider remains inside the guard; auth source never manually persists credentials or expands backend scope", () => {
+test("real leads provider remains inside the guard; auth source never manually persists credentials or expands backend scope", () => {
   const workspace = fs.readFileSync("app/admin/(workspace)/layout.tsx", "utf8");
-  assert.match(workspace, /<AdminGuard><MockLeadsProvider>/);
+  assert.match(workspace, /<AdminGuard><LeadsProvider>/);
   for (const file of ["lib/admin/auth.ts", "components/admin/AdminAuthProvider.tsx", "components/admin/AdminGuard.tsx", "components/admin/LoginForm.tsx", "components/admin/AdminNavbar.tsx"]) {
     const source = fs.readFileSync(file, "utf8");
     assert.doesNotMatch(source, /localStorage|sessionStorage|setSession\(|createJWT\(|tablesDB\.|Role\.users\(|account\.create\(/);

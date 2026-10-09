@@ -34,7 +34,12 @@
 .live { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 11px; font-weight: 700; color: var(--admin-cyan); background: rgba(76,215,246,.1); border-radius: 12px; padding: 2px 9px; margin-top: 4px; }
 .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .demoHint { margin-top: 24px; font-size: 11px; color: #869397; text-align: center; }
-.metrics { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 12px; margin-bottom: 32px; }
+.metrics { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 12px; margin-bottom: 32px; }
+.batchNotice { color: var(--admin-muted); font-size: 12px; line-height: 1.6; margin-bottom: 20px; }
+.recentMeta .date { display: block; }
+.noteText, .quote { white-space: pre-wrap; overflow-wrap: anywhere; }
+.noteText { padding: 12px; }
+.admin select:disabled, .admin textarea:disabled { cursor: not-allowed; opacity: .65; }
 .metric { padding: 16px; border-radius: 8px; background: var(--admin-panel); min-width: 0; }
 .metricHeader { display: flex; justify-content: space-between; align-items: center; color: var(--admin-muted); font-size: 11px; text-transform: uppercase; font-weight: 700; letter-spacing: .025em; }
 .metricValue { font-family: var(--admin-heading-font), sans-serif; font-size: 30px; font-weight: 700; margin-top: 8px; line-height: 1.2; letter-spacing: -.04em; }
@@ -175,6 +180,13 @@
 .remember label { display: flex; align-items: center; gap: 8px; }
 .remember input { accent-color: #06b6d4; width: 16px; height: 16px; }
 .loginSubmit { width: 100%; background: #06b6d4; padding: 13px; font-family: Georgia, serif; font-size: 15px; font-weight: 700; color: #003640; }
+.loginSubmit { margin-top: 20px; }
+.authState { padding: 48px 24px; text-align: center; color: var(--admin-muted); }
+.authState > :not(:first-child) { margin-top: 16px; }
+.authError { margin-top: 16px; font-size: 13px; line-height: 1.5; color: #ffb4ab; }
+.authRetry { margin-top: 16px; }
+.logoutButton { background: transparent; font: inherit; font-weight: 600; text-align: left; }
+.logoutError { padding: 12px 24px; margin: 0; background: #2a101e; color: #ffb4ab; text-align: center; }
 .loginFoot { display: flex; justify-content: space-between; gap: 8px; margin-top: 28px; color: var(--admin-muted); font-size: 11px; }
 .loginFoot span { display: inline-flex; align-items: center; gap: 6px; }
 .loginFoot svg { color: var(--admin-cyan); }
@@ -196,7 +208,7 @@
   .subtitle { font-size: 13px; }
   .metrics { grid-template-columns: repeat(6,minmax(0,1fr)); gap: 8px; margin-bottom: 28px; }
   .metric { grid-column: span 2; padding: 12px; }
-  .metric:nth-child(n+4) { grid-column: span 3; }
+  .metric:nth-child(n+4) { grid-column: span 2; }
   .metricHeader { font-size: 10px; }
   .metricHeader svg { width: 16px; height: 16px; }
   .metricValue { font-size: 24px; margin-top: 10px; }

@@ -9,6 +9,7 @@ const auth = createAdminAuth({ account, teams, config: appwriteConfig });
 type ContextValue = {
   state: AdminAuthState;
   refresh: () => Promise<void>;
+  recheckSession: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<boolean>;
   loggingOut: boolean;
@@ -22,6 +23,24 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
   const [logoutError, setLogoutError] = useState("");
   const generation = useRef(0);
   const busy = useRef(false);
+
+  // A data read has already cleared its private cache. Keep the workspace
+  // provider mounted if identity is still valid, so a denied read cannot loop.
+  const recheckSession = useCallback(async () => {
+    if (busy.current) return;
+    busy.current = true;
+    const current = ++generation.current;
+    try {
+      const next = await auth.restore((denied) => {
+        if (current !== generation.current) return false;
+        setState(denied);
+        return true;
+      });
+      if (current === generation.current) setState(next);
+    } catch {
+      if (current === generation.current) setState({ status: "error", message: authMessages.verification });
+    } finally { busy.current = false; }
+  }, []);
 
   const refresh = useCallback(async () => {
     if (busy.current) return;
@@ -82,7 +101,7 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
       if (current === generation.current) setLoggingOut(false);
     }
   };
-  return <Context.Provider value={{ state, refresh, login, logout, loggingOut, logoutError }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ state, refresh, recheckSession, login, logout, loggingOut, logoutError }}>{children}</Context.Provider>;
 }
 
 export function useAdminAuth() {

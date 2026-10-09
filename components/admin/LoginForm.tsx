@@ -70,7 +70,7 @@ export default function LoginForm() {
         </form>
         {state.status === "error" && <button className={styles.textLink + " " + styles.authRetry} onClick={() => void refresh()}>Check session again</button>}
       </>}
-      <div className={styles.loginSignals}><span><AdminIcon name="bolt" size={14} />Mock lead workspace</span></div>
+      <div className={styles.loginSignals}><span><AdminIcon name="bolt" size={14} />Read-only lead workspace</span></div>
     </main>
   </div>;
 }

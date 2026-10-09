@@ -1,5 +1,6 @@
 import AdminNavbar from "@/components/admin/AdminNavbar";
-import MockLeadsProvider from "@/components/admin/MockLeadsProvider";
+import LeadsProvider from "@/components/admin/LeadsProvider";
+import AdminGuard from "@/components/admin/AdminGuard";
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
-  return <MockLeadsProvider><AdminNavbar />{children}</MockLeadsProvider>;
+  return <AdminGuard><LeadsProvider><AdminNavbar />{children}</LeadsProvider></AdminGuard>;
 }
