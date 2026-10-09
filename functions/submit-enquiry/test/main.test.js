@@ -48,6 +48,7 @@ test("valid enquiry is trimmed, server-owned fields are assigned, and exactly on
     message: "I need a website for my business.", source: "StackNova Website", status: "New",
   });
   assert.equal(Object.hasOwn(result.writes[0].data, "deletedAt"), false);
+  assert.equal(Object.hasOwn(result.writes[0].data, "notes"), false);
   assert.equal(result.headers["Access-Control-Allow-Origin"], "http://localhost:3000");
   assert.equal(result.headers.Vary, "Origin");
 });
@@ -92,7 +93,7 @@ test("missing, blank, invalid, long, or non-string fields never writes", async (
 });
 
 test("privileged and unexpected fields never writes", async () => {
-  for (const field of ["status", "deletedAt", "createdAt", "updatedAt", "$id", "$createdAt", "$updatedAt", "$permissions", "databaseId", "tableId", "__proto__", "extra"]) {
+  for (const field of ["status", "notes", "deletedAt", "createdAt", "updatedAt", "$id", "$createdAt", "$updatedAt", "$permissions", "databaseId", "tableId", "__proto__", "extra"]) {
     const result = await invoke({ body: { ...payload, [field]: "Converted" } });
     assert.equal(result.status, 400);
     assert.equal(result.writes.length, 0);

@@ -105,9 +105,11 @@ test("frontend and Function agree on trimming, formats, controls, services, and 
   }
   for (const body of cases) {
     let writes = 0;
-    const handler = createHandler({ env: { DATABASE_ID: "test", LEADS_TABLE_ID: "test", ALLOWED_ORIGINS: "http://localhost:3000" },
+    const handler = createHandler({ env: { DATABASE_ID: "test", LEADS_TABLE_ID: "test", ALLOWED_ORIGINS: "http://localhost:3000",
+      APPWRITE_FUNCTION_API_ENDPOINT: "https://appwrite-test.invalid/v1", APPWRITE_FUNCTION_PROJECT_ID: "test-project" },
       writeLead: async () => { writes += 1; } });
-    const result = await handler({ req: { method: "POST", headers: { origin: "http://localhost:3000", "content-type": "application/json" }, bodyText: JSON.stringify(body) },
+    const result = await handler({ req: { method: "POST", headers: { origin: "http://localhost:3000", "content-type": "application/json",
+      "x-appwrite-key": "fake-execution-key" }, bodyText: JSON.stringify(body) },
       res: { json: (body, status) => ({ body, status }) } });
     const valid = Object.keys(api.validateEnquiry(body)).length === 0;
     assert.equal(valid, result.status === 201, JSON.stringify(body).slice(0, 160));

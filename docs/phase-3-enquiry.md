@@ -41,11 +41,12 @@ The existing columns must accommodate the following constraints (limits use Java
 | `message` | 4,000, including an optional appended Budget line |
 | `source` | Server assigns `StackNova Website`; supplied optional source is validated but not trusted |
 | `status` | Server assigns enum value `New` |
-| `deletedAt` | Must allow `null` for an active lead |
+| `notes` | Optional Text for internal admin notes; no index required; omitted during public lead creation |
+| `deletedAt` | Optional; omitted during public lead creation |
 
 If existing column sizes are smaller, tighten both `lib/enquiry.ts` and `functions/submit-enquiry/src/main.js` before use. Do not grant extra permissions to fix schema errors. The Function stores text, without interpreting it as HTML. Future viewers must render message text safely rather than using raw HTML.
 
-Use Appwrite metadata for `$id`, `$createdAt`, and `$updatedAt`. The Function generates an ID and passes `permissions: []`, with no caller-supplied metadata or permissions. Leave the table private: **no Any read/create/update/delete** on the table and no public row permissions. Leave `lead_notes` private and untouched.
+Use Appwrite metadata for `$id`, `$createdAt`, and `$updatedAt`. The Function generates an ID and passes `permissions: []`, with no caller-supplied metadata or permissions. Leave the table private: **no Any read/create/update/delete** on the table and no public row permissions. Internal notes live in `leads.notes` and remain empty until an authenticated admin updates them in a later integration phase. The Contact form does not supply notes, and the Function does not send them.
 
 ## Deployment
 
@@ -145,7 +146,7 @@ Backend tests use fake configuration and stubbed database writes; they do not co
 1. Open `http://localhost:3000`, submit an empty/invalid form, and verify clear errors, focus on the first invalid field, and no Function request.
 2. Fill every required field and submit. In browser Network tools, verify OPTIONS permits the exact origin and the only application POST goes to the Function domain; there must be no browser TablesDB requests. Confirm the loading state and disabled submit button, including repeated clicks/Enter.
 3. Confirm HTTP 201 and the success message, and that the form resets only after success.
-4. In the Appwrite Console, inspect the private leads table. Confirm exactly one new row, trimmed values, `status: New`, `deletedAt: null`, source, system timestamps, and no public row permissions. Do not use the mock admin screen as evidence of persistence.
+4. In the Appwrite Console, inspect the private leads table. Confirm exactly one new row, trimmed values, `status: New`, empty `notes` and `deletedAt`, source, system timestamps, and no public row permissions. The Function omits both optional fields. Do not use the mock admin screen as evidence of persistence.
 5. Send valid JSON directly with an invalid email, then send another body containing `status: Converted`. Expect 400 and verify no new row appears. This exercises server validation independently of the form.
 6. Test GET (405), text/plain POST (415), malformed JSON (400), and unapproved/missing Origin (403); none may create a lead.
 7. For current localhost testing, check CORS on both success and failure responses. If using the Appwrite Console's execution tester, supply a POST, JSON Content-Type, and `Origin: http://localhost:3000`. Testing from `https://stacknova.in` and `https://www.stacknova.in` is deferred until production access is available.

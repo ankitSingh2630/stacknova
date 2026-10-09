@@ -1,4 +1,6 @@
 import { Client, ID, TablesDB } from "node-appwrite";
+import { Resend } from "resend";
+import { buildCustomerConfirmationEmail, buildAdminLeadEmail } from "./email-templates.js";
 
 const limits = { name: 100, email: 254, phone: 32, company: 150, service: 100, message: 4000, source: 100 };
 const services = new Set([
@@ -70,21 +72,55 @@ function verifyConfiguration(req, env) {
   if (missing.length) throw new Error(`Missing configuration: ${missing.join(", ")}`);
 }
 
-function errorDetails(exception, req) {
+function errorDetails(exception, req, env) {
   // Whitelist scalar diagnostics, never serialize the exception, response, or request.
   const credentials = ["x-appwrite-key", "x-appwrite-user-jwt", "authorization", "cookie"]
-    .map((header) => req.headers[header]).filter((value) => typeof value === "string" && value);
+    .map((header) => req.headers[header]);
+  credentials.push(env.RESEND_API_KEY);
+  const secrets = credentials.filter((value) => typeof value === "string" && value);
   const details = {};
-  for (const field of ["name", "message", "code", "status", "type"]) {
+  for (const field of ["name", "message", "code", "status", "statusCode", "type"]) {
     const value = exception?.[field];
     if (typeof value === "string") {
-      details[field] = credentials.reduce((text, credential) => text.replaceAll(credential, "[REDACTED]"), value);
+      details[field] = secrets.reduce((text, credential) => text.replaceAll(credential, "[REDACTED]"), value)
+        .replace(/[\u0000-\u001F\u007F]/g, " ").slice(0, 1000);
     } else if (typeof value === "number") {
       details[field] = value;
     }
   }
   if (!Object.keys(details).length) details.message = "Unknown error";
   return JSON.stringify(details);
+}
+
+// Logging must never change the result of a successfully saved enquiry.
+function report(logger, message) {
+  try { logger?.(message); } catch { /* Appwrite logging is best effort. */ }
+}
+
+async function sendLeadEmails({ req, env, data, createEmailClient, log, error }) {
+  let client;
+  const operations = [
+    { name: "Customer confirmation", keys: ["RESEND_API_KEY", "RESEND_FROM_EMAIL"],
+      build: () => ({ from: env.RESEND_FROM_EMAIL, to: data.email,
+        ...buildCustomerConfirmationEmail(data) }) },
+    { name: "Admin notification", keys: ["RESEND_API_KEY", "RESEND_FROM_EMAIL", "STACKNOVA_LEADS_EMAIL"],
+      build: () => ({ from: env.RESEND_FROM_EMAIL, to: env.STACKNOVA_LEADS_EMAIL,
+        replyTo: data.email, ...buildAdminLeadEmail(data) }) },
+  ];
+  const outcomes = await Promise.allSettled(operations.map(async (operation) => {
+    const missing = operation.keys.filter((key) => typeof env[key] !== "string" || !env[key].trim());
+    if (missing.length) throw new Error(`Missing configuration: ${missing.join(", ")}`);
+    // This helper is called only after writeLead resolves. No client exists before then.
+    client ??= createEmailClient(env.RESEND_API_KEY);
+    const result = await client.emails.send(operation.build(), { signal: AbortSignal.timeout(8000) });
+    if (result.error) throw result.error;
+    if (!result.data?.id) throw new Error("Email provider did not confirm acceptance");
+  }));
+  outcomes.forEach((outcome, index) => {
+    const name = operations[index].name;
+    if (outcome.status === "fulfilled") report(log, `${name} email accepted by provider.`);
+    else report(error, `${name} email failed or skipped: ${errorDetails(outcome.reason, req, env)}`);
+  });
 }
 
 async function createLead({ req, env, data }) {
@@ -99,10 +135,12 @@ async function createLead({ req, env, data }) {
 }
 
 // Dependencies are injectable for tests. HTTP callers cannot provide env or a database writer.
-export function createHandler({ env = process.env, writeLead = createLead } = {}) {
-  return async ({ req, res, error }) => {
+export function createHandler({ env = process.env, writeLead = createLead,
+  createEmailClient = (key) => new Resend(key) } = {}) {
+  return async ({ req, res, log, error }) => {
     const headers = { "Vary": "Origin", "Cache-Control": "no-store" };
     const reply = (status, message) => res.json({ success: false, message }, status, headers);
+    let data;
     try {
       const origins = allowedOrigins(env.ALLOWED_ORIGINS);
       const origin = req.headers.origin;
@@ -137,15 +175,19 @@ export function createHandler({ env = process.env, writeLead = createLead } = {}
       const result = validate(body);
       if (result.message) return reply(400, result.message);
       verifyConfiguration(req, env);
-      // Exactly one create, no retries, reads, updates, notes, or email operations.
+      // Exactly one private create; never attempt email before this completes successfully.
       await writeLead({ req, env, data: result.data });
-      return res.json({
-        success: true, message: "Thank you! Your enquiry has been submitted successfully.",
-      }, 201, headers);
+      data = result.data;
     } catch (exception) {
-      error?.(`Enquiry submission failed: ${errorDetails(exception, req)}`);
+      report(error, `Enquiry submission failed: ${errorDetails(exception, req, env)}`);
       return reply(500, failureMessage);
     }
+    // Database storage is primary. Email/configuration failures cannot enter the 500 path above.
+    try { await sendLeadEmails({ req, env, data, createEmailClient, log, error }); }
+    catch { report(error, "Email processing failed after lead was saved."); }
+    return res.json({
+      success: true, message: "Thank you! Your enquiry has been submitted successfully.",
+    }, 201, headers);
   };
 }
 

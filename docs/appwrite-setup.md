@@ -1,8 +1,18 @@
-# Appwrite frontend foundation — Phase 2
+# Appwrite frontend foundation — Phase 2, with Phase 3 enquiry integration
 
-Phase 2 prepares the Appwrite Web SDK for later frontend integration. The Appwrite database and the `leads` and `lead_notes` tables already exist in the Console. This phase does not create tables, alter permissions, authenticate users, or perform database operations.
+## Phase 3 update
+
+Public enquiries now use the `submit-enquiry` Appwrite Function. See [Phase 3 setup and deployment](phase-3-enquiry.md) for the complete instructions. `Contact.tsx` invokes its public HTTPS URL with `fetch`; it never imports the browser SDK or writes directly to TablesDB. The exported SDK services remain preparation for later phases, and admin screens still use mock data.
+
+Set `NEXT_PUBLIC_ENQUIRY_FUNCTION_URL` in the site's local/build environment after deploying the Function, then restart development or rebuild `dist/`. An empty URL fails safely; it does not fall back to email or mock success. The Function uses server-side `DATABASE_ID`, `LEADS_TABLE_ID`, and `ALLOWED_ORIGINS`, plus Appwrite-injected runtime credentials with only `rows.write`. For current Phase 3 testing set `ALLOWED_ORIGINS=http://localhost:3000`; production origins and testing are deferred until deployment access is available. Existing public identifiers remain unchanged. No Resend or authentication is implemented.
+
+The remaining sections describe the original Phase 2 foundation; the Phase 3 update above supersedes their statements about the unchanged Contact form and future Function implementation.
+
+Phase 2 prepares the Appwrite Web SDK for later frontend integration. The Appwrite database and the `leads` table already exist in the Console. Internal admin notes are stored in the optional `notes` Text column on `leads`. This phase does not create tables, alter permissions, authenticate users, or perform database operations.
 
 The admin screens continue to use `MockLeadsProvider` and `lib/admin/mock-data.ts`. The public website and `components/Contact.tsx` remain unchanged.
+
+The Phase 1 mock UI keeps an in-memory note timeline with titles and timestamps for display. It does not use a separate Appwrite table. Keep that demo intact until real admin integration, when persistence will use the single `leads.notes` Text field.
 
 ## SDK and configuration
 
@@ -22,10 +32,10 @@ Keep the existing `.env.local` values local. Do not overwrite that file with the
 | --- | --- |
 | `NEXT_PUBLIC_APPWRITE_ENDPOINT` | Project API endpoint, including the `/v1` path. |
 | `NEXT_PUBLIC_APPWRITE_PROJECT_ID` | Appwrite project ID. |
-| `NEXT_PUBLIC_APPWRITE_DATABASE_ID` | Database containing the existing tables. |
+| `NEXT_PUBLIC_APPWRITE_DATABASE_ID` | Database containing the existing `leads` table. |
 | `NEXT_PUBLIC_APPWRITE_LEADS_TABLE_ID` | ID of the `leads` table. |
-| `NEXT_PUBLIC_APPWRITE_NOTES_TABLE_ID` | ID of the `lead_notes` table. |
 | `NEXT_PUBLIC_APPWRITE_ADMIN_TEAM_ID` | Team ID reserved for future administrator access. |
+| `NEXT_PUBLIC_ENQUIRY_FUNCTION_URL` | Public HTTPS URL of the deployed `submit-enquiry` Function. |
 
 Populate these variables before importing the client in a future phase. Configuration defaults to empty strings when a variable is missing; it does not invent a project or endpoint. The SDK requires a valid HTTP(S) endpoint when the client module is initialized.
 
@@ -49,6 +59,7 @@ For future browser requests, register `localhost` and the production hostname as
 | `message` | Enquiry or project description. |
 | `source` | Enquiry source. |
 | `status` | Lead pipeline status. |
+| `notes` | Optional Text column for internal admin notes; no index required. |
 | `deletedAt` | Soft-deletion timestamp; empty for active leads. |
 
 Supported status values:
@@ -67,18 +78,11 @@ Current leads indexes:
 - `service`
 - `deletedAt`
 
-### lead_notes table
-
-| Column | Purpose |
-| --- | --- |
-| `leadId` | ID of the lead the note belongs to. |
-| `note` | Private note text. |
-
-Notes also use Appwrite's `$id`, `$createdAt`, and `$updatedAt` system metadata.
+The public Contact form does not supply `notes`. The `submit-enquiry` Function creates leads with only `name`, `email`, `phone`, `company`, `service`, `message`, `source`, and `status: "New"`. It omits `notes` and `deletedAt`. Internal notes remain empty until an authenticated admin updates `leads.notes` in a later integration phase. No index is needed for `notes`.
 
 ## Security
 
-Both tables currently remain private. Do not grant public access at either table or row level:
+The `leads` table remains private, including its internal notes. Do not grant public access at either table or row level:
 
 - No public read.
 - No public create.
@@ -86,7 +90,7 @@ Both tables currently remain private. Do not grant public access at either table
 - No public delete.
 - Notes remain private.
 
-Public enquiry creation will later go through an Appwrite Function. Any privileged credentials for that function must remain in its server-side environment, never in frontend variables.
+Public enquiry creation goes through the `submit-enquiry` Appwrite Function using its execution-provided runtime key. Privileged credentials must never be put in frontend variables.
 
 Admins will later authenticate using Appwrite Authentication. Future administrator access must be restricted to the designated admin team through Appwrite permissions. The exported `account` instance is only preparation; no login, session lookup, or team check is implemented in Phase 2.
 
