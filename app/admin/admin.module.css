@@ -36,6 +36,7 @@
 .demoHint { margin-top: 24px; font-size: 11px; color: #869397; text-align: center; }
 .metrics { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 12px; margin-bottom: 32px; }
 .batchNotice { color: var(--admin-muted); font-size: 12px; line-height: 1.6; margin-bottom: 20px; }
+.queryNotice { color: var(--admin-cyan); font-size: 12px; margin-bottom: 16px; }
 .recentMeta .date { display: block; }
 .noteText, .quote { white-space: pre-wrap; overflow-wrap: anywhere; }
 .noteText { padding: 12px; }
@@ -148,6 +149,7 @@
 .noteHeader strong { color: var(--admin-cyan); display: flex; gap: 5px; align-items: center; font-weight: 600; }
 .note p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 .feedback { color: var(--admin-cyan); font-size: 12px; margin-top: 10px; }
+.mutationError { color: #ffb4ab; font-size: 13px; margin-top: 10px; line-height: 1.5; }
 .deleteArea { margin-top: 8px; max-width: 480px; margin-inline: auto; text-align: center; }
 .dangerButton { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; background: #2a101e; color: #ffb4ab; border-radius: 8px; padding: 12px; font-weight: 700; }
 .dangerButton:hover { background: #421525; }

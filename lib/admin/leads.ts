@@ -1,7 +1,7 @@
-import { Query, type TablesDB } from "appwrite";
+import type { TablesDB } from "appwrite";
 import { leadStatuses, type Lead, type LeadStatus } from "./types";
+import { buildLeadQueries, createRowLister, LEADS_PAGE_SIZE, type LeadQuery } from "./lead-queries";
 
-export const leadBatchLimit = 100;
 export const leadsMessages = {
   failure: "Unable to load leads right now.",
   access: "Unable to access leads right now. Please contact your administrator or try again.",
@@ -47,7 +47,7 @@ export function mapLeadRow(input: unknown): Lead {
   };
 }
 
-function readFailure(error: unknown): ReadFailure {
+export function readFailure(error: unknown): ReadFailure {
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
   if (code === 401) return { ok: false, kind: "session", message: leadsMessages.session };
   if (code === 403) return { ok: false, kind: "access", message: leadsMessages.access };
@@ -55,14 +55,12 @@ function readFailure(error: unknown): ReadFailure {
 }
 
 export function newestLeads(leads: Lead[]) {
-  return [...leads].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  return [...leads].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id));
 }
-export function leadStatistics(leads: Lead[]) {
-  return { total: leads.length, ...Object.fromEntries(leadStatuses.map(status =>
-    [status, leads.filter(lead => lead.status === status).length])) } as { total: number } & Record<LeadStatus, number>;
-}
-export function batchNotice(loaded: number, total: number) {
-  return total > loaded ? `Showing latest ${loaded} of ${total} leads. Figures and filters apply to the loaded batch.` : "";
+
+export function validateRowList(result: { rows: unknown[]; total: number }, limit: number) {
+  if (!Array.isArray(result.rows) || result.rows.length > limit || !Number.isSafeInteger(result.total) || result.total < result.rows.length)
+    throw new Error("Invalid list response");
 }
 
 export function createLeadsReader({ tablesDB, config }: {
@@ -70,18 +68,15 @@ export function createLeadsReader({ tablesDB, config }: {
   config: { databaseId: string; leadsTableId: string };
 }) {
   const configured = () => Boolean(config.databaseId.trim() && config.leadsTableId.trim());
+  const lister = createRowLister(tablesDB, config);
   return {
-    async list(): Promise<{ ok: true; leads: Lead[]; total: number } | ReadFailure> {
+    async list(query: Partial<LeadQuery> = {}): Promise<{ ok: true; leads: Lead[]; total: number; warning?: string } | ReadFailure> {
       if (!configured()) return readFailure(null);
       try {
-        const result = await tablesDB.listRows({
-          databaseId: config.databaseId, tableId: config.leadsTableId,
-          queries: [Query.orderDesc("$createdAt"), Query.limit(leadBatchLimit), Query.isNull("deletedAt")],
-        });
-        if (!Array.isArray(result.rows) || !Number.isSafeInteger(result.total) || result.total < result.rows.length)
-          throw new Error("Invalid list response");
+        const result = await lister.list(buildLeadQueries(query));
+        validateRowList(result, LEADS_PAGE_SIZE);
         const leads = result.rows.map(mapLeadRow).filter(lead => lead.deletedAt === null);
-        return { ok: true, leads: newestLeads(leads), total: result.total };
+        return { ok: true, leads: newestLeads(leads), total: result.total, ...(lister.warning ? { warning: lister.warning } : {}) };
       } catch (error) { return readFailure(error); }
     },
     async detail(id: string): Promise<{ ok: true; lead: Lead | null } | ReadFailure> {

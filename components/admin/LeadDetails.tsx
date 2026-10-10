@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import AdminIcon from "./AdminIcon";
 import { useLeads } from "./LeadsProvider";
 import LeadsState from "./LeadsState";
@@ -14,27 +14,42 @@ import styles from "@/app/admin/admin.module.css";
 export default function LeadDetails() {
   // This hook is intentionally below the route's Suspense boundary.
   const params = useSearchParams();
-  const { getLeadState, ensureLead, loading, refreshLeads } = useLeads();
+  const { getLeadState, ensureLead, ready } = useLeads();
   const id = params.get("id");
-  useEffect(() => { if (id && validLeadId(id)) void ensureLead(id); }, [id, ensureLead, loading]);
+  useEffect(() => { if (ready && id && validLeadId(id)) void ensureLead(id); }, [id, ensureLead, ready]);
   const detail = id && validLeadId(id) ? getLeadState(id) : { status: "notFound" as const };
-  if (detail.status === "loading" || detail.status === "error") return <main className={styles.page}><LeadsState loading={detail.status === "loading"} error={detail.status === "error" ? detail.message : ""} onRetry={refreshLeads} /></main>;
+  if (detail.status === "loading" || detail.status === "error") return <main className={styles.page}><LeadsState loading={detail.status === "loading"} error={detail.status === "error" ? detail.message : ""} onRetry={async () => { if (id) await ensureLead(id, true); }} /></main>;
   if (detail.status === "notFound") return <main className={styles.page}><div className={styles.empty}><h1>{id ? "Lead unavailable" : "Choose a lead"}</h1><p>{id ? "This lead could not be found or is no longer available." : "Open a lead from the incoming pipeline to view its details."}</p><Link href="/admin/leads/" className={styles.primaryButton}>Back to Leads</Link></div></main>;
   return <LeadDetailContent key={detail.lead.id} lead={detail.lead} />;
 }
 
 function LeadDetailContent({ lead }: { lead: Lead }) {
+  const router = useRouter();
+  const { getMutationState, updateLeadStatus, addLeadNote, softDeleteLead } = useLeads();
+  const mutation = getMutationState(lead.id);
+  const [draft, setDraft] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const archiveButton = useRef<HTMLButtonElement>(null);
   const [feedback, setFeedback] = useState("");
   const copyEmail = async () => {
     try { await navigator.clipboard.writeText(lead.email); setFeedback("Email address copied."); }
     catch { setFeedback("Copy unavailable. Select and copy the email address above."); }
   };
+  const archive = async () => {
+    if (await softDeleteLead(lead.id)) router.replace("/admin/leads/");
+  };
+  const saveNote = async () => {
+    if (!draft.trim() || mutation.pending) return;
+    if (await addLeadNote(lead.id, draft)) setDraft("");
+  };
+  const closeDialog = () => { dialog.current?.close(); setConfirming(false); archiveButton.current?.focus(); };
   return <main className={styles.page + " " + styles.detailPage}>
     <Link href="/admin/leads/" className={styles.backLink}><AdminIcon name="back" size={16} />Back to Leads</Link>
     <section className={styles.detailHero} aria-labelledby="lead-name">
       <div className={styles.detailHeroTop}><span>ID: #{lead.id}</span><span className={styles.live}><span className={styles.dot} />{lead.status === "Closed" ? "Closed Enquiry" : "Active Inbound"}</span></div>
       <h1 id="lead-name">{lead.name}</h1><p className={styles.secondary}>{lead.service} enquiry</p>
-      <div className={styles.statusControl}><label htmlFor="lead-status">Pipeline Status</label><select id="lead-status" value={lead.status} disabled aria-describedby="lead-readonly">{leadStatuses.map(status => <option key={status}>{status}</option>)}</select></div>
+      <div className={styles.statusControl}><label htmlFor="lead-status">Pipeline Status{mutation.pending && mutation.operation === "status" && <span role="status"> · Saving status…</span>}</label><select id="lead-status" value={lead.status} disabled={mutation.pending} onChange={event => void updateLeadStatus(lead.id, event.target.value)}>{leadStatuses.map(status => <option key={status}>{status}</option>)}</select></div>
     </section>
     <div className={styles.detailColumns}>
       <div>
@@ -53,11 +68,18 @@ function LeadDetailContent({ lead }: { lead: Lead }) {
       </div>
       <section className={styles.detailSection} aria-labelledby="private-notes"><h2 id="private-notes" className={styles.detailSectionTitle}><AdminIcon name="lock" size={16} />Private Notes</h2><div className={styles.notesPanel}>
         {lead.notes.trim() ? <p className={styles.noteText}>{lead.notes}</p> : <p className={styles.secondary}>No notes recorded.</p>}
-        <label htmlFor="private-note" className="sr-only">Add a private note</label><textarea id="private-note" className={styles.noteInput} placeholder="Notes editing is unavailable" disabled aria-describedby="lead-readonly" /><div className={styles.noteActions}><button type="button" className={styles.secondaryButton} disabled><AdminIcon name="note" size={14} />Add Note</button></div>
+        <form aria-busy={mutation.pending && mutation.operation === "notes"} onSubmit={event => { event.preventDefault(); void saveNote(); }}>
+          <label htmlFor="private-note" className={styles.fieldLabel}>Add a note</label><textarea id="private-note" className={styles.noteInput} placeholder="Add a note" value={draft} disabled={mutation.pending} onChange={event => setDraft(event.target.value)} /><div className={styles.noteActions}><button type="submit" className={styles.secondaryButton} disabled={mutation.pending || !draft.trim()}><AdminIcon name="note" size={14} />{mutation.pending && mutation.operation === "notes" ? "Saving note…" : "Save Note"}</button></div>
+        </form>
       </div></section>
     </div>
     <p className={styles.feedback} role="status" aria-live="polite">{feedback}</p>
-    <div className={styles.deleteArea}><button className={styles.dangerButton} disabled aria-describedby="lead-readonly"><AdminIcon name="trash" />Delete Lead</button></div>
-    <p id="lead-readonly" className={styles.demoHint}>This workspace is read-only. Editing and deletion are unavailable.</p>
+    {mutation.message && <p className={mutation.success ? styles.feedback : styles.mutationError} role={mutation.success ? "status" : "alert"} aria-live="polite">{mutation.message}</p>}
+    <div className={styles.deleteArea}><button ref={archiveButton} className={styles.dangerButton} disabled={mutation.pending} onClick={() => { setConfirming(true); dialog.current?.showModal(); }}><AdminIcon name="trash" />Archive Lead</button><p>Remove this lead from active leads. The stored record will be retained.</p></div>
+    <dialog ref={dialog} className={styles.dialog} aria-labelledby="archive-title" aria-describedby="archive-description" onCancel={event => { if (mutation.pending) event.preventDefault(); else setConfirming(false); }} onClose={() => { setConfirming(false); archiveButton.current?.focus(); }}>
+      <h2 id="archive-title">Archive this lead?</h2><p id="archive-description">Remove {lead.name} from active leads? This does not permanently delete the record.</p>
+      {confirming && mutation.message && !mutation.success && <p className={styles.mutationError} role="alert">{mutation.message}</p>}
+      <div className={styles.dialogActions}><button type="button" className={styles.secondaryButton} disabled={mutation.pending} onClick={closeDialog}>Cancel</button><button type="button" className={styles.dangerButton} disabled={mutation.pending} onClick={() => void archive()}>{mutation.pending && mutation.operation === "archive" ? "Archiving…" : "Archive Lead"}</button></div>
+    </dialog>
   </main>;
 }

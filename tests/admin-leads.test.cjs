@@ -1,19 +1,7 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
-const fs = require("node:fs");
-const vm = require("node:vm");
-const ts = require("typescript");
 const { Query } = require("appwrite");
-function load(file, imports = {}) {
-  const context = { exports: {}, URL, require: name => imports[name] || { Query } };
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, "utf8"), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText, context);
-  return context.exports;
-}
-const types = load("lib/admin/types.ts");
-const api = load("lib/admin/leads.ts", { "./types": types });
-const format = load("lib/admin/format.ts");
+const { types, api, format, queries } = require("./helpers/admin.cjs");
 const plain = value => JSON.parse(JSON.stringify(value));
 const row = {
   $id: "real-row-1", $createdAt: "2026-10-09T03:30:00.000Z", $updatedAt: "2026-10-09T04:30:00.000Z",
@@ -73,8 +61,8 @@ test("listRows uses exact approved query array and preserves total beyond the ba
   assert.equal(result.total, 137);
   assert.equal(result.leads.length, 1);
   assert.deepEqual(fixture.calls[0], ["list", { databaseId: config.databaseId, tableId: config.leadsTableId,
-    queries: [Query.orderDesc("$createdAt"), Query.limit(100), Query.isNull("deletedAt")] }]);
-  assert.equal(api.leadBatchLimit, 100);
+    queries: [Query.isNull("deletedAt"), Query.orderDesc("$createdAt"), Query.orderDesc("$id"), Query.limit(5), Query.offset(0)], total: true, ttl: 0 }]);
+  assert.equal(queries.LEADS_PAGE_SIZE, 5);
 });
 test("list results sort newest first without mutating input and exclude populated deletedAt", async () => {
   const rows = [{ ...row, $id: "older", $createdAt: "2026-10-01T00:00:00.000Z" }, row,
@@ -138,18 +126,6 @@ test("detail failures/mismatched IDs/malformed rows never expose data or provide
     assert.equal(result.lead, undefined);
     assert.ok(!JSON.stringify(result).includes("private"));
   }
-});
-test("statistics are derived only from loaded leads including Closed", () => {
-  const leads = types.leadStatuses.map((status, index) => api.mapLeadRow({ ...row, $id: `row-${index}`, status }));
-  assert.deepEqual(plain(api.leadStatistics(leads)), { total: 5, New: 1, Contacted: 1, "In Progress": 1, Converted: 1, Closed: 1 });
-  assert.equal(api.leadStatistics([]).total, 0);
-});
-test("latest-100 notice is shown only when the returned total exceeds loaded count", () => {
-  assert.match(api.batchNotice(100, 137), /Showing latest 100 of 137 leads/);
-  assert.match(api.batchNotice(100, 137), /Figures and filters apply to the loaded batch/);
-  assert.equal(api.batchNotice(100, 100), "");
-  assert.equal(api.batchNotice(1, 1), "");
-  assert.equal(api.batchNotice(0, 0), "");
 });
 test("India calendar filters use actual timestamps, current day and last seven days", () => {
   const now = new Date("2026-10-09T06:00:00.000Z");
