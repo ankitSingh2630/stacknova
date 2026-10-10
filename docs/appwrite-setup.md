@@ -1,4 +1,54 @@
-# Appwrite frontend foundation — Phase 2, with Phase 3 enquiry integration
+# Appwrite setup
+
+This is the current configuration checklist. Detailed environment/runtime classification and deployment procedures are in [deployment readiness](deployment-readiness.md); local evidence and pending live checks are in [final QA](final-qa.md). The original Phase 2/3 foundation is retained below as a clearly marked historical record.
+
+## Current architecture and permissions
+
+Public Contact sends only name/email/phone/company/service/message to the public submit-enquiry Function. The Function validates input, creates one lead using its runtime key, then attempts customer/admin emails. Source and New status are server-owned. Authenticated admins use Account/Teams and private browser TablesDB operations. Direct email invokes the team-only send-lead-email Function, which reads the authoritative lead recipient and sends through Resend without updating the lead.
+
+| Resource | Intended access/scope | Live verification |
+| --- | --- | --- |
+| Leads: StackNova Admins | Read, Update, Delete; Create disabled | PENDING |
+| Leads: public/Any/Guests/Users | No public table or row grants | PENDING |
+| submit-enquiry Execute | Any | PENDING |
+| submit-enquiry scope | rows.write only | PENDING |
+| send-lead-email Execute | StackNova Admins only | PENDING |
+| send-lead-email scope | rows.read only | PENDING |
+
+Check the intended existing project and accepted team memberships; being a Console administrator alone does not authorize the site's user account. Register intended browser platform hostnames. The browser guard controls presentation; Appwrite permissions enforce private data access. Preserve Row Security and row grants. Table permissions apply to all rows; empty row permissions do not remove table-level grants. No Phase 10 Console changes are performed.
+
+## Current lead schema checklist
+
+Verify actual capacities read-only in the Console. Repository documentation specifies the following requirements, not proof of deployed values:
+
+| Column | Current purpose/constraint |
+| --- | --- |
+| name | Required string, maximum 100 after trim |
+| email | Required practical bare mailbox, maximum 254 |
+| phone | Required string, maximum 32; 7-15 digits |
+| company | Optional string, maximum 150; empty if omitted |
+| service | Required existing Project Type choice, maximum 100 |
+| message | Required text, maximum 4,000 including composed budget |
+| source | Server-owned StackNova Website |
+| status | New, Contacted, In Progress, Converted, Closed; public create assigns New |
+| notes | Optional private Text; appended through confirmed admin updates |
+| deletedAt | Legacy historical-row compatibility only; omitted by new public creates |
+
+Use Appwrite system $id/$createdAt/$updatedAt metadata. Retain existing status, service and deletedAt indexes; record proven live query/index problems rather than creating speculative schema. No columns, tables, indexes or scopes are changed in Phase 10.
+
+New deletion is permanent deleteRow(), with explicit confirmation and no deletedAt write. Historical populated deletedAt rows remain hidden through existing types, queries and guards. Do not clear markers, drop schema or migrate historical rows in this phase; a future migration needs separate approval.
+
+## Current runtime and deployment checklist
+
+The seven frontend NEXT_PUBLIC identifiers are public; see the root .env.example and deployment readiness. Backend configuration and RESEND_API_KEY belong only in each Function's Variables. Appwrite supplies runtime endpoint/project context and the ephemeral request key automatically, so do not manually add runtime keys. Keep real env files private; example files remain tracked.
+
+Each Function keeps Node >=22, entrypoint src/main.js, npm ci --omit=dev --ignore-scripts, packaged src/assets, no events/schedules and the existing 30-second timeout. ALLOWED_ORIGINS is an exact approved list for submit-enquiry; no wildcard. CORS constrains browsers but does not authenticate direct clients.
+
+Phase 10 requires frontend redeployment for corrected metadata and no Function redeployment. Pending Phase 9 public Function deployment and real capacities/permissions/CORS/persistence/delivery are not marked complete. See the current handoff documents before following any historical deployment instructions below.
+
+## Historical Phase 2/3 foundation
+
+Everything below records implementation at those earlier phases. Mock admin, future authentication, six-variable configuration and then-current permissions are not current operational instructions. Historical test results and links are retained without changing their dates.
 
 > Hard-delete update: Current admin permission requirements supersede the historical foundation below: on leads ? Security grant StackNova Admins Read, Update and Delete; keep Create disabled and grant no Any/Guests/Users access. deleteLead uses deleteRow and never writes deletedAt. Keep the deletedAt column/index and query guards temporarily for historical rows. Manually inspect populated markers and decide which rows to permanently delete; do not clear markers or drop schema. Public creation and both Functions are unchanged. Rebuild/redeploy only the frontend. See [lead management](phase-7-lead-management.md).
 

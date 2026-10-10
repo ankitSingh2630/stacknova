@@ -1,10 +1,14 @@
 # Phase 3: public enquiry submission
 
+> Phase 10 handoff: follow [deployment readiness](deployment-readiness.md) and [final QA](final-qa.md) for current operational instructions and verification status. Dated results and earlier-phase scopes below are historical records; they do not establish live deployment or delivery.
+
 > Current Phase 9 contract: only name/email/phone/company/service/message are public fields; source is server-owned and rejected in requests. Admin integration and enquiry emails are now implemented. See [Phase 9 security hardening](phase-9-security-hardening.md) for current validation, logging, deployment order, permissions and intentional anti-abuse limitations. Historical verification sections below describe their original phases.
+
+## Historical Phase 3 scope
 
 The static Contact form sends a JSON POST to the `submit-enquiry` Appwrite Function. The Function validates the input and creates one private `leads` row using the server SDK and execution-provided credential. Admin screens still use mocks. This phase contains no email delivery, login, real admin data operations, Next.js API routes, server actions, or SSR.
 
-## Appwrite Console setup
+## Function setup recorded during Phase 3
 
 1. Open the existing StackNova project. Verify the existing `leads` table before deploying; no schema changes are made by this code.
 2. Under Functions, create a Function with **ID `submit-enquiry`** and **name `submit-enquiry`**. Select **Node.js 22** (or a supported newer Node.js runtime).

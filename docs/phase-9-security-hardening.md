@@ -1,5 +1,7 @@
 # Phase 9: security hardening
 
+> Phase 9 implementation record: the security contract below remains current. Its statements that Phase 10 was not started describe the Phase 9 boundary. Phase 10 now documents handoff/QA; no Function source changes are made. Live Phase 9 deployment, capacities, permissions, production CORS, persistence and delivered-email checks remain PENDING. See [deployment readiness](deployment-readiness.md) and [final QA](final-qa.md).
+
 Phase 9 hardens the existing static Contact -> public `submit-enquiry` Function -> private TablesDB -> Resend flow. Next.js remains `output: 'export'`, with no SSR, API routes, or Server Actions. Admin authentication, team verification, queries, status/notes updates, permanent deletion, five-row pagination, filters, Send Email and its CC/BCC feature are unchanged. Phase 10 is not started.
 
 ## Public request contract

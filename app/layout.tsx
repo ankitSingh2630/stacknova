@@ -34,14 +34,14 @@ export const metadata: Metadata = {
     title: "StackNova Technologies — We Build Technology That Moves Businesses Forward",
     description:
       "From idea to scalable digital product — modern engineering, thoughtful design and business thinking.",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "StackNova Technologies" }],
+    images: [{ url: "/logo.png", width: 480, height: 160, alt: "StackNova Technologies logo" }],
   },
   twitter: {
-    card: "summary_large_image",
+    card: "summary",
     title: "StackNova Technologies",
     description:
       "We build technology that moves businesses forward. Web, software, cloud and product engineering.",
-    images: ["/og.png"],
+    images: [{ url: "/logo.png", alt: "StackNova Technologies logo" }],
   },
   icons: {
     icon: [{ url: "/favicon.png", type: "image/png", sizes: "180x180" }],

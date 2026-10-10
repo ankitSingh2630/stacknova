@@ -1,5 +1,11 @@
 # Phase 5: admin authentication and authorization
 
+> Phase 10 handoff: follow [deployment readiness](deployment-readiness.md) and [final QA](final-qa.md) for current operational instructions and verification status. Dated results and earlier-phase scopes below are historical records; they do not establish live deployment or delivery.
+
+## Historical Phase 5 implementation
+
+The mock-provider and fixture references in this historical section describe Phase 5 only. The finished workspace uses LeadsProvider and real Appwrite queries, confirmed status/notes writes and permanent deletion. Appwrite team permissions are the data security boundary. See [Phase 7](phase-7-lead-management.md) and [Phase 8](phase-8-query-pagination.md).
+
 Phase 5 replaces the fake admin login and navigation-only logout with Appwrite Account authentication and accepted Appwrite Team membership verification. Admin lead data still comes from `MockLeadsProvider` and `lib/admin/mock-data.ts`. Contact, the `submit-enquiry` Function, Resend, database schema, and lead permissions are unchanged.
 
 ## Architecture

@@ -1,6 +1,8 @@
 # Phase 7: lead management writes and permanent deletion
 
-Authorized StackNova admins can change status, append private notes, and permanently delete a lead. Every operation is confirmed by Appwrite before cached lead data changes. Public Contact submission, both Functions, Resend, Send Email/CC/BCC, authentication and Phase 8 queries are unchanged by the hard-delete update. Phase 9 is not started.
+> Phase 10 handoff: follow [deployment readiness](deployment-readiness.md) and [final QA](final-qa.md) for current operational instructions and verification status. Dated results and earlier-phase scopes below are historical records; they do not establish live deployment or delivery.
+
+Authorized StackNova admins can change status, append private notes, and permanently delete a lead. Every operation is confirmed by Appwrite before cached lead data changes. Public Contact submission, both Functions, Resend, Send Email/CC/BCC, authentication and Phase 8 queries are unchanged by the hard-delete update. Phase 9 subsequently hardened public submissions without changing these admin operations.
 
 ## Manual Appwrite permission step
 

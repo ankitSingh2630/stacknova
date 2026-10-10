@@ -1,14 +1,16 @@
 # Admin email from Lead Details
 
+> Phase 10 handoff: follow [deployment readiness](deployment-readiness.md) and [final QA](final-qa.md) for current operational instructions and verification status. Dated results and earlier-phase scopes below are historical records; they do not establish live deployment or delivery.
+
 > Hard-delete update: Lead management now permanently deletes rows through the authenticated browser SDK. A deleted lead naturally fails the existing getRow lookup and cannot be emailed. Legacy deletedAt guards remain for historical archived rows. Send Email, CC/BCC, templates, Resend, Function permissions and both deployed Functions are unchanged by this update; no Function redeployment is required for hard deletion. Only the frontend rebuild/redeployment and table team Delete grant are needed.
 
-This focused feature adds Send Email below Private Notes on `/admin/lead/?id=<lead-id>`. Phase 9 is not started. Email history and database mutations are outside this feature.
+This focused feature adds Send Email below Private Notes on `/admin/lead/?id=<lead-id>`. Email history and database mutations are outside this feature.
 
 ## Architecture and authorization
 
 `LeadEmailPanel` → `lib/admin/lead-email.ts` → shared authenticated Web SDK `functions.createExecution()` → private `send-lead-email` Function → server SDK `TablesDB.getRow()` → Resend → confirmed response.
 
-`submit-enquiry` remains public for Contact submissions. It is not reused for admin sends: letting a public submission endpoint perform admin sends would mix incompatible authorization boundaries. The later email-consistency update also changes its own customer/admin-notification templates; both Functions require separate redeployment for that update.
+`submit-enquiry` remains public for Contact submissions. It is not reused for admin sends: letting a public submission endpoint perform admin sends would mix incompatible authorization boundaries. The historical email-consistency update changed its customer/admin-notification templates and required separate deployment of both Functions at that time. Phase 10 changes no Function runtime and requires no Function redeployment.
 
 Appwrite Execute access is the primary authorization boundary. Set it to the existing **StackNova Admins team only**, identified by the same team ID used by `NEXT_PUBLIC_APPWRITE_ADMIN_TEAM_ID`. The permission role is `team:<team-id>` (`Role.team(teamId)`); do not grant Any, Guests, or all Users. The browser uses its existing Appwrite session and never submits passwords, tokens, API keys, or identity headers. The handler additionally requires Appwrite's runtime `x-appwrite-user-id` context and accepts only POST JSON. This does not substitute for the Console Execute permission. Console/API-key invocations without authenticated user context are intentionally rejected; use the signed-in admin page for live verification. Leave events and schedules empty. Normal admin usage never invokes a generated/custom Function domain.
 
@@ -108,7 +110,7 @@ The panel sits below Private Notes in the right column and stacks with the exist
 
 An SDK authentication 401 or completed Function response with status 401 uses LeadsProvider's existing private-cache clearing and controlled central auth recheck; no retry loop is added. SDK or completed Function permission 403 preserves the session and drafts. Internal database 401/403 failures are safe server failures, not browser session failures. Responses belonging to a different lead, identity, logged-out session, archived lead, or unmounted panel cannot update its state. Existing archived-detail unavailability remains.
 
-## Variables and manual Appwrite setup
+## Historical initial setup (current values remain applicable)
 
 1. Open the existing Appwrite project → Functions → create **send-lead-email**. Record its ID.
 2. Select the same compatible Node runtime as the current submit-enquiry Function (Node 22 or newer, matching the package's engines).
@@ -196,7 +198,7 @@ Only user-performed deployed verification can confirm live delivery. Local tests
 
 Official references: [Function configuration/Execute access](https://appwrite.io/docs/products/functions/functions), [synchronous executions](https://appwrite.io/docs/products/functions/execute), [runtime credentials and development](https://appwrite.io/docs/products/functions/develop).
 
-## Email consistency and CC/BCC update
+## Historical email consistency and CC/BCC deployment update
 
 The latest visual source of truth is `docs/email-template/screen.png`: all three outgoing HTML emails use the same light gray background, white bordered card, cyan accent, typography/spacing, and footer. The existing packaged logo is centered **inside** the main card at **210 x 70 pixels** (about 5% wider than the reference's 200px mark), above the badge. Desktop card padding is 40px; email-safe narrow-screen styles reduce it to 32px vertically/24px horizontally. The logo remains a CID attachment. No artwork was changed, and runtime templates do not read the screenshot or frontend assets.
 

@@ -1,6 +1,8 @@
 # Phase 8: Appwrite queries, pagination, and totals
 
-Phase 6 temporarily loaded the latest 100 active rows and searched, filtered, paginated, and counted that batch in the browser. Phase 8 replaces that strategy with page-sized TablesDB queries and full matching-result totals. Phase 7 status updates, append-note history, and permanent deletions remain confirmed-only operations. Phase 9 is not implemented.
+> Phase 10 handoff: follow [deployment readiness](deployment-readiness.md) and [final QA](final-qa.md) for current operational instructions and verification status. Dated results and earlier-phase scopes below are historical records; they do not establish live deployment or delivery.
+
+Phase 6 temporarily loaded the latest 100 active rows and searched, filtered, paginated, and counted that batch in the browser. Phase 8 replaces that strategy with page-sized TablesDB queries and full matching-result totals. Phase 7 status updates, append-note history, and permanent deletions remain confirmed-only operations. Phase 9 subsequently hardened public submissions; this server query/pagination architecture remains unchanged.
 
 ## Architecture
 

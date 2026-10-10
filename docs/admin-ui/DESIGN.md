@@ -134,6 +134,9 @@ spacing:
   space-xl: 1.75rem
 ---
 
+> Historical design reference: preserve these original tokens and screenshots as provenance, not as an exact specification of the finished UI. Current public/admin styling uses Manrope and the implemented Tailwind/admin CSS. Kanban/priority/Open Pipeline descriptions and alternate fonts/status labels below are not current product features. All three email templates use the current light branded system described in [admin email](../admin-lead-email.md). Do not redesign runtime UI to match this historical reference.
+
+
 ## Brand & Style
 
 This design system delivers a high-density, authoritative command center tailored for executive lead operations and agency technical administration. The aesthetic balances crisp technical precision with an uncluttered modernist corporate baseline. It deliberately avoids consumer-facing dashboard tropes, fluorescent gradients, and decorative glass blurs in favor of architectural surfaces, low-contrast 1px separation lines, and disciplined data density.

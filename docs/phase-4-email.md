@@ -1,6 +1,10 @@
 # Phase 4: enquiry emails with Resend
 
+> Phase 10 handoff: follow [deployment readiness](deployment-readiness.md) and [final QA](final-qa.md) for current operational instructions and verification status. Dated results and earlier-phase scopes below are historical records; they do not establish live deployment or delivery.
+
 > Current security behavior is documented in [Phase 9 security hardening](phase-9-security-hardening.md). Source is now server-owned only, raw controls and practical mailbox syntax are enforced, configured sender/admin addresses are validated, and logs omit arbitrary provider text. Templates and authenticated admin Send Email/CC/BCC are unchanged. Historical phase summaries below retain their original verification context.
+
+## Historical Phase 4 scope
 
 The existing static Contact form continues to POST to the `submit-enquiry` Appwrite Function. Phase 4 adds server-side customer confirmation and internal lead notification emails after the private lead has been saved. The frontend has no Resend dependency or credential. Admin screens still use mock data; no admin authentication, real admin CRUD, or notes editing is added.
 
@@ -107,13 +111,13 @@ Local implementation verification on 2026-10-09: all 42 Function tests and nine 
 - [Resend send-email API](https://resend.com/docs/api-reference/emails/send-email)
 - [Resend SDK 6.9.4](https://github.com/resend/resend-node/tree/v6.9.4)
 
-## Customer-email update before Phase 9
+## Historical customer-email update before Phase 9
 
 Redeploy the Function with the updated source and packaged logo asset. No frontend/admin, Phase 8 query, schema, permission, scope, validation, or public lead-creation changes are part of this update. Keep the existing Function variables and verified sender address. Verify the customer light-card layout and inline logo in Gmail desktop/mobile, Outlook, and Apple Mail after a real deployed submission; confirm both emails show the StackNova Technologies sender name and the admin Reply-To still targets the customer. Automated tests do not prove live delivery or email-client rendering.
 
 Local verification: all 47 Function/Resend tests passed, including the five added template/sender/asset tests. The official SDK send is intercepted; its customer attachment payload is verified as base64 with the matching content ID. No live Resend request was made.
 
-## Latest email consistency + CC/BCC update
+## Historical email consistency + CC/BCC deployment update
 
 The updated `docs/email-template/screen.png` is the visual source of truth. Customer confirmation, internal New Lead Received notification, and direct lead messages now follow one light StackNova system: off-white outer background, centered white bordered 600px card, cyan top accent, 14px radius, consistent typography/spacing/sign-off/footer, and current-year copyright. The **210 x 70px packaged CID logo is inside the main card above the badge**, enlarged about 5% beyond the reference's 200px mark. It no longer sits outside/above the card. Narrow-screen card padding is reduced safely; Outlook retains a conservative fixed-width wrapper.
 
