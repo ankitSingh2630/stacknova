@@ -51,6 +51,6 @@ export default function LeadsList() {
         <button className={styles.pageButton} aria-label="Next page" disabled={busy || activePage === pageCount} onClick={() => setPage(activePage + 1)}><AdminIcon name="chevron" size={16} style={{ transform: "rotate(-90deg)" }} /></button>
       </div></nav>
     </div> : <div className={styles.empty}><h2>{loading || searchPending ? "Updating results…" : hasFilters ? "No leads match your search or filters." : "No leads found."}</h2>{hasFilters && <button className={styles.secondaryButton} onClick={clearFilters}>Clear filters</button>}</div>}
-    <p className={styles.demoHint}>Open a lead to manage its status, notes, or archive it.</p>
+    <p className={styles.demoHint}>Open a lead to manage its status, notes, or permanently delete it.</p>
   </main>;
 }

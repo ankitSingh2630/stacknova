@@ -6,4 +6,5 @@ export const appwriteConfig = {
   databaseId: process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID || "",
   leadsTableId: process.env.NEXT_PUBLIC_APPWRITE_LEADS_TABLE_ID || "",
   adminTeamId: process.env.NEXT_PUBLIC_APPWRITE_ADMIN_TEAM_ID || "",
+  sendLeadEmailFunctionId: process.env.NEXT_PUBLIC_APPWRITE_SEND_LEAD_EMAIL_FUNCTION_ID || "",
 };

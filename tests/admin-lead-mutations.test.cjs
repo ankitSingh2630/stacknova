@@ -8,12 +8,12 @@ const row = {
   service: "Web Development", message: "Project requirements", source: "StackNova Website", status: "New", notes: "Confirmed notes", deletedAt: null,
 };
 const config = { databaseId: "test-database", leadsTableId: "test-leads" };
-const now = () => new Date("2026-10-09T05:30:00.000Z");
 const plain = value => JSON.parse(JSON.stringify(value));
 const failure = code => Object.assign(new Error("private Appwrite permission response / project / token"), { code });
 function fixture({ error, returned, configuration = config } = {}) {
   const calls = [];
-  const writer = api.createLeadMutations({ config: configuration, now, tablesDB: {
+  const writer = api.createLeadMutations({ config: configuration, tablesDB: {
+    deleteRow: async params => { calls.push(plain(params)); if (error) throw error; return {}; },
     updateRow: async params => { calls.push(plain(params)); if (error) throw error;
       return returned || { ...row, ...params.data, $updatedAt: "2026-10-09T06:00:00.000Z" }; },
   } });
@@ -56,14 +56,18 @@ test("notes rejects object/array/non-string inputs without accepting a full Lead
   for (const value of [row, [], null, undefined, 1]) assert.equal((await writer.notes(row.$id, value)).ok, false);
   assert.equal(calls.length, 0);
 });
-test("soft delete is one updateRow patch containing only an ISO deletedAt timestamp", async () => {
-  const { writer, calls } = fixture();
-  const result = await writer.archive(row.$id);
-  assert.equal(result.ok, true);
-  assert.deepEqual(calls[0], { databaseId: config.databaseId, tableId: config.leadsTableId, rowId: row.$id,
-    data: { deletedAt: "2026-10-09T05:30:00.000Z" } });
-  assert.equal(result.lead.deletedAt, calls[0].data.deletedAt);
+test("hard delete uses deleteRow only, with exact IDs and no data or fabricated lead", async () => {
+  let updates = 0;
+  const calls = [];
+  const writer = api.createLeadMutations({ config, tablesDB: {
+    updateRow: async () => { updates++; throw new Error("Deletion must not update"); },
+    deleteRow: async params => { calls.push(plain(params)); return {}; },
+  } });
+  assert.deepEqual(plain(await writer.delete(row.$id)), { ok: true, id: row.$id });
+  assert.deepEqual(calls, [{ databaseId: config.databaseId, tableId: config.leadsTableId, rowId: row.$id }]);
+  assert.equal(updates, 0);
 });
+
 test("returned mapped row supplies real updatedAt and all confirmed fields", async () => {
   const updated = { ...row, status: "Contacted", company: "Server Company", notes: "Server notes", $updatedAt: "2026-10-09T07:15:00.000Z" };
   const { writer } = fixture({ returned: updated });
@@ -71,7 +75,8 @@ test("returned mapped row supplies real updatedAt and all confirmed fields", asy
   assert.deepEqual(plain(result.lead), plain(reads.mapLeadRow(updated)));
   assert.equal(result.lead.updatedAt, updated.$updatedAt);
 });
-for (const operation of ["status", "notes", "archive"]) {
+for (const operation of ["status", "notes", "delete"]) {
+  if (operation !== "delete")
   test(`${operation} rejects a mismatched row ID and malformed response safely`, async () => {
     const value = operation === "status" ? "Contacted" : "Updated notes";
     for (const returned of [{ ...row, $id: "wrong-row" }, { ...row, name: null }, { ...row, $updatedAt: "invalid" }]) {
@@ -95,23 +100,23 @@ test("a returned row that does not confirm the requested field cannot produce su
   const { writer } = fixture({ returned: row });
   assert.equal((await writer.status(row.$id, "Contacted")).ok, false);
   assert.equal((await writer.notes(row.$id, "Changed")).ok, false);
-  assert.equal((await writer.archive(row.$id)).ok, false);
 });
 test("invalid IDs/configuration never reach updateRow", async () => {
   for (const configuration of [config, { ...config, databaseId: "" }, { ...config, leadsTableId: "" }]) {
     const { writer, calls } = fixture({ configuration });
     const id = configuration === config ? "../invalid" : row.$id;
-    for (const [method, value] of [["status", "Contacted"], ["notes", "Notes"], ["archive", undefined]])
+    for (const [method, value] of [["status", "Contacted"], ["notes", "Notes"], ["delete", undefined]])
       assert.equal((await writer[method](id, value)).ok, false);
     assert.equal(calls.length, 0);
   }
 });
-test("admin runtime contains no create/hard-delete calls and updates are centralized", () => {
+test("admin runtime centralizes hard deletion and updates, without public creation", () => {
   const inspect = path => {
     if (fs.statSync(path).isDirectory()) { for (const name of fs.readdirSync(path)) inspect(`${path}/${name}`); return; }
     if (!/\.(tsx?|css)$/.test(path)) return;
     const source = fs.readFileSync(path, "utf8");
-    assert.doesNotMatch(source, /\.createRow\(|\.deleteRow\(/, path);
+    assert.doesNotMatch(source, /\.createRow\(|softDeleteLead/, path);
+    if (!path.endsWith("lead-mutations.ts")) assert.doesNotMatch(source, /\.deleteRow\(/, path);
     if (!path.endsWith("lead-mutations.ts")) assert.doesNotMatch(source, /\.updateRow\(/, path);
     assert.doesNotMatch(source, /localStorage|sessionStorage/, path);
     assert.doesNotMatch(source, /lead_notes/, path);

@@ -1,12 +1,12 @@
 # Phase 8: Appwrite queries, pagination, and totals
 
-Phase 6 temporarily loaded the latest 100 active rows and searched, filtered, paginated, and counted that batch in the browser. Phase 8 replaces that strategy with page-sized TablesDB queries and full matching-result totals. Phase 7 status updates, append-note history, and archive writes remain confirmed-only operations. Phase 9 is not implemented.
+Phase 6 temporarily loaded the latest 100 active rows and searched, filtered, paginated, and counted that batch in the browser. Phase 8 replaces that strategy with page-sized TablesDB queries and full matching-result totals. Phase 7 status updates, append-note history, and permanent deletions remain confirmed-only operations. Phase 9 is not implemented.
 
 ## Architecture
 
 LeadsList controls → central LeadsProvider query state → createLeadsReader → shared authenticated `tablesDB.listRows()` → requested matching page.
 
-`lib/admin/lead-queries.ts` builds queries and validates criteria. The installed `appwrite@28.1.0` supports all operators and the object-argument `listRows` signature used here. List, dashboard, recent-open, and direct-detail state are independent. Reads are lazy: visiting the list loads its page; visiting the dashboard loads its summary; opening a direct detail can call `getRow()` without a list request.
+`lib/admin/lead-queries.ts` builds queries and validates criteria. The installed `appwrite@28.1.0` supports all operators and the object-argument `listRows` signature used here. List, dashboard, and direct-detail state are independent. Reads are lazy: visiting the list loads its page; visiting the dashboard loads its summary; opening a direct detail can call `getRow()` without a list request.
 
 The query state contains page, trimmed applied search, status, service, and date range. The provider separately holds the immediate search draft and last successfully displayed query, so old rows are not labelled as completed results for new criteria.
 
@@ -69,7 +69,7 @@ For example, India-local 2026-10-10 midnight is `2026-10-09T18:30:00.000Z`. Date
 
 Search, status, service, and date changes reset page 1. After each response, the provider clamps an out-of-range page to `min(page, max(1, totalPages))` and performs **at most one corrected fetch**. If the database changes again and that corrected page is also invalid, it shows a safe refresh state instead of looping. A deliberate refresh uses the latest corrected page and current criteria.
 
-Offset pagination can become slower and shift under concurrent inserts/archives on large or frequently changing datasets. Cursor pagination may be preferable there; this assessment keeps approved numbered pages.
+Offset pagination can become slower and shift under concurrent inserts/deletions on large or frequently changing datasets. Cursor pagination may be preferable there; this assessment keeps approved numbered pages.
 
 The secondary `$id` order provides deterministic ties for equal creation timestamps. If an actual HTTP 400 explicitly identifies unsupported/invalid `$id` ordering, the reader retries once without that order and exposes a safe ordering notice. Missing-index errors, generic 400s, and authentication/permission failures do not trigger this fallback. The reader remembers that ordering fallback for its lifetime. It does not create an index or change schema. **Live ordering/index compatibility remains unverified.**
 
@@ -77,22 +77,22 @@ The secondary `$id` order provides deterministic ties for equal creation timesta
 
 `lib/admin/dashboard.ts` centralizes six parallel requests, all with `total: true`, `ttl: 0`:
 
-1. Active recent rows: `isNull("deletedAt")`, `orderDesc("$createdAt")`, `orderDesc("$id")`, `limit(3)`. Its total supplies Total Leads; its full rows supply Recent Leads.
+1. Active recent rows: `isNull("deletedAt")`, `orderDesc("$createdAt")`, `orderDesc("$id")`, `limit(5)`. Its total supplies Total Leads; its full rows supply Recent Leads.
 2. One query for each of the five canonical statuses: `isNull("deletedAt")`, `equal("status", status)`, `limit(1)`, `select(["$id"])`. Only returned totals supply status counts.
 
-Count-only rows bypass the full Lead mapper because required lead fields are deliberately excluded. The summary is not calculated from list rows or search/filter results. Open Pipeline = New + Contacted + In Progress; no extra count request is made for it. Each total is exact for its individual request; these six requests are not a transactionally frozen snapshot across concurrent database changes.
+Count-only rows bypass the full Lead mapper because required lead fields are deliberately excluded. The summary is not calculated from list rows or search/filter results. Each total is exact for its individual request; these six requests are not a transactionally frozen snapshot across concurrent database changes.
 
-Review loads one small recent-open query only when needed: active-only, status equal to `["New", "Contacted", "In Progress"]`, newest/ID order, limit 3. It is labelled Recent Open Leads. Summary/recent-open results are cached in provider memory and do not refetch merely because components render.
+The pre-Phase-9 visual alignment removes Open Pipeline, its Review action, and the unused recent-open query/provider path. Dashboard Recent Leads now requests up to five newest active rows. Dashboard summaries remain cached in provider memory and do not refetch merely because components render. The five status-count queries and Leads page pagination are unchanged.
 
 ## Mutations, caches, and races
 
-Phase 7 narrow `updateRow` payloads, returned-row ID/mapping checks, per-lead locks, simple append-only notes, and archive behavior remain. No admin creation or hard deletion is introduced.
+Status/notes retain narrow `updateRow` payloads and returned-row ID/mapping checks. Permanent deletion now uses `deleteRow` with configured database/table/row IDs, without a deletedAt write or fabricated returned row. Per-lead locks and simple append-only notes remain; no admin creation is introduced.
 
-- Status/archive success preserves the confirmed returned detail row (archive marks it unavailable), then refreshes the current server list and any requested dashboard/recent-open state. Server totals/page correction are authoritative; no guessed filtered-count arithmetic is performed, including for detail-only rows.
+- Status success preserves the confirmed returned detail row; delete success removes list/detail/recent data and marks details unavailable, then refreshes the current server list and any requested dashboard state. Server totals/page correction are authoritative; no guessed filtered-count arithmetic is performed, including for detail-only rows.
 - Notes additions update confirmed cached data and preserve the current page. They do not normally query the list or refresh dashboard statistics. If a list read was already pending or criteria changed during the write, that user-requested read is resumed after the lock settles.
 - Reads that would conflict with pending writes are queued/coalesced until per-lead locks settle. Other leads remain independently operable.
-- Separate list/dashboard/open request counters discard superseded responses. A shared identity/lifecycle epoch invalidates all pending results after logout, authorization loss, identity change, unmount, or a 401 cache clear. Detail reads have per-ID tokens/version guards. Archived cache entries cannot be resurrected by older list data.
-- Confirmed write success and follow-up read failure are separate. A failed refresh does not report status/archive failure, roll back the returned row, or clear a notes draft as if a failed write succeeded.
+- Separate list/dashboard request counters discard superseded responses. A shared identity/lifecycle epoch invalidates all pending results after logout, authorization loss, identity change, unmount, or a 401 cache clear. Detail reads have per-ID tokens/version guards. Unavailable/deleted cache entries cannot be resurrected by older list data.
+- Confirmed write success and follow-up read failure are separate. A failed refresh does not report status/delete failure, restore a deleted row, or clear a notes draft as if a failed write succeeded.
 
 Previous rows/figures remain during subsequent reads, with Updating feedback explicitly describing them as previous results. Initial reads use the existing full loading state. Empty unfiltered results say `No leads found.`; filtered/search empty results say `No leads match your search or filters.`
 
@@ -106,13 +106,13 @@ Previous rows/figures remain during subsequent reads, with Updating feedback exp
 
 If live Appwrite reports a missing index, capture its exact query/index requirement for review and add only that proven requirement manually. No index/schema/permission changes are performed by this code or its tests.
 
-Keep StackNova Admins **Read + Update**, with Create/Delete disabled, no public grants, and unchanged Row Security. No new environment variables are needed. Static export remains: browser SDK queries use the authenticated session/team/table security boundary. No middleware, SSR, API routes, route handlers, server actions, or dynamic detail routes are added.
+Manually enable StackNova Admins **Read + Update + Delete**, with Create disabled, no public grants, and unchanged Row Security. No new environment variables are needed. Static export remains: browser SDK queries use the authenticated session/team/table security boundary. No middleware, SSR, API routes, route handlers, server actions, or dynamic detail routes are added.
 
 References checked: [Appwrite queries](https://appwrite.io/docs/products/databases/tablesdb/queries), [tables/indexes](https://appwrite.io/docs/products/databases/tablesdb/tables), [pagination/totals](https://appwrite.io/docs/products/databases/tablesdb/pagination), and the installed SDK's Query, TablesDB, and RowList typings. [Official index query validator](https://github.com/utopia-php/database/blob/main/src/Database/Validator/IndexedQueries.php) distinguishes full-text search requirements from substring queries.
 
 ## Verification
 
-Automated tests mock TablesDB/auth and never use a live database or send real enquiries/emails. Run `node --test tests/*.test.cjs` at the root, `npm.cmd test` from `functions/submit-enquiry/`, and `npm.cmd run build` at the root. Phase 6 mapper/detail/auth regression checks remain; obsolete batch/client-filter assertions now test paginated/server behavior. Phase 7 status/notes/archive failures, locking, mapping, draft preservation, and auth invalidation are retained.
+Automated tests mock TablesDB/auth and never use a live database or send real enquiries/emails. Run `node --test tests/*.test.cjs` at the root, `npm.cmd test` from `functions/submit-enquiry/`, and `npm.cmd run build` at the root. Phase 6 mapper/detail/auth regression checks remain; obsolete batch/client-filter assertions now test paginated/server behavior. Status/notes/delete failures, locking, mapping, draft preservation, and auth invalidation are retained.
 
 Verification on 2026-10-10: **244 tests passed** (202 root tests, including 63 Phase 8 tests, plus 42 Function/Resend tests). The final `npm.cmd run build` passed compilation, lint, type checks, and all eight static pages. All four exported admin routes retain guarded initial HTML, without unit fixture data.
 
@@ -122,7 +122,7 @@ If `npm.cmd run dev` was running during the build, restart that development serv
 
 Live verification is pending. Use an authorized admin session and a specifically identified disposable test lead for mutations:
 
-1. Confirm existing indexes/Read + Update team grants in the Console.
+1. Confirm existing indexes/Read + Update + Delete team grants in the Console.
 2. Use enough active leads for several five-row pages; verify requests carry limit/offset/total/ttl as documented.
 3. Navigate forward, backward, and via page numbers; check range/total/page count.
 4. Store/use `Ankit Singh`; compare `ankit`, `ANKIT`, `AnKiT` and report observed case behavior.
@@ -131,9 +131,13 @@ Live verification is pending. Use an authorized admin session and a specifically
 7. Check Today around India midnight and Last 7 Days across the inclusive start/exclusive end.
 8. Verify no-match state and query-update feedback.
 9. Change a disposable New lead to Contacted while filtered by New; confirm persisted detail and refreshed results/dashboard.
-10. Archive the last matching lead on a final page; verify authoritative total/page correction and retained row/deletedAt.
-11. Verify archived direct URLs are unavailable; append notes and confirm no extra count/page request.
-12. Refresh the browser, inspect full dashboard totals/recent/open sections, then log out and verify protection.
+10. Permanently delete a disposable last matching lead on a final page; verify authoritative total/page correction and that its Appwrite row no longer exists.
+11. Verify deleted and historically archived direct URLs are unavailable; append notes and confirm no extra count/page request.
+12. Refresh the browser, inspect full dashboard totals and five recent leads, then log out and verify protection.
 13. Record any actual ordering or missing-index errors. Do not claim compatibility from mocked tests alone.
 
 The Contact → Function → TablesDB → Resend pipeline is unchanged. CAPTCHA, rate limiting, anti-spam, honeypots, and unrelated production hardening remain outside Phase 8.
+
+## Hard-delete transition
+
+Keep the deletedAt column/index, mapper support and all `Query.isNull("deletedAt")` filters temporarily. New deletions do not write deletedAt. Historical populated markers stay excluded until you manually inspect and decide which rows to delete permanently; never clear those markers to migrate them. Schema/filter cleanup is a separate approved task. A delete 404 removes stale caches and reconciles totals without a success notice. Confirmed deletion remains successful if subsequent reads fail. See [lead management](phase-7-lead-management.md) for permanent confirmation, errors and manual migration. Only frontend rebuild/redeployment and the team table Delete grant are required; neither Function changes.

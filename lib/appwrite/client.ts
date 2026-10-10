@@ -1,6 +1,6 @@
 "use client";
 
-import { Account, Client, TablesDB, Teams } from "appwrite";
+import { Account, Client, Functions, TablesDB, Teams } from "appwrite";
 import { appwriteConfig } from "./config";
 
 // Reuse this one client for future frontend integrations.
@@ -14,3 +14,4 @@ if (appwriteConfig.projectId) client.setProject(appwriteConfig.projectId);
 export const account = new Account(client);
 export const tablesDB = new TablesDB(client);
 export const teams = new Teams(client);
+export const functions = new Functions(client);

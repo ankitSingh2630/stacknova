@@ -177,7 +177,7 @@ test("real text renders escaped, including message and notes", () => {
   assert.ok(html.includes("&lt;script&gt;")); assert.ok(html.includes("&lt;img"));
   assert.ok(!html.includes("<script>")); assert.ok(!html.includes("<img"));
 });
-test("production runtime has no mock data, create or hard delete; detail URL and Suspense stay static", () => {
+test("production runtime has no mock data or create, and centralizes hard deletion; detail URL and Suspense stay static", () => {
   assert.equal(fs.existsSync("components/admin/MockLeadsProvider.tsx"), false);
   assert.equal(fs.existsSync("lib/admin/mock-data.ts"), false);
   for (const directory of ["components/admin", "lib/admin", "app/admin"]) {
@@ -185,7 +185,8 @@ test("production runtime has no mock data, create or hard delete; detail URL and
       if (fs.statSync(path).isDirectory()) { for (const entry of fs.readdirSync(path)) inspect(`${path}/${entry}`); return; }
       if (!/\.(tsx?|css)$/.test(path)) return;
       const source = fs.readFileSync(path, "utf8");
-      assert.doesNotMatch(source, /MockLeadsProvider|mock-data|useMockLeads|\.deleteRow\(|\.createRow\(/, path);
+      assert.doesNotMatch(source, /MockLeadsProvider|mock-data|useMockLeads|\.createRow\(/, path);
+      if (!path.endsWith("lead-mutations.ts")) assert.doesNotMatch(source, /\.deleteRow\(/, path);
       if (!path.endsWith("lead-mutations.ts")) assert.doesNotMatch(source, /\.updateRow\(/, path);
     };
     inspect(directory);

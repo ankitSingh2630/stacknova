@@ -1,5 +1,7 @@
 # Phase 6: real, read-only admin leads
 
+> Hard-delete update: Current integration supersedes this historical read-only phase: status and notes use updateRow, and deleteLead permanently removes rows using deleteRow. StackNova Admins now requires table Read + Update + Delete (Create disabled). The deletedAt mapper, active filters and detail guards remain temporarily for historical archived rows; no markers are cleared or schema removed. See [Phase 7](phase-7-lead-management.md) and [Phase 8](phase-8-query-pagination.md) for current behavior.
+
 Phase 6 connects the authenticated admin workspace to the existing private Appwrite `leads` table. Contact, `lib/enquiry.ts`, the `submit-enquiry` Function, Resend, public submission behavior, and Function scopes are unchanged. No lead writes or admin write permissions are added.
 
 ## Architecture and security boundary

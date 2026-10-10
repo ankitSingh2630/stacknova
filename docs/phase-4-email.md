@@ -15,7 +15,7 @@ STACKNOVA_LEADS_EMAIL=
 | Variable | Purpose |
 | --- | --- |
 | `RESEND_API_KEY` | Secret Resend credential, configured only in Appwrite Function settings. |
-| `RESEND_FROM_EMAIL` | Verified sender address used as FROM for both outgoing emails. Configure the sender you selected for StackNova. |
+| `RESEND_FROM_EMAIL` | Verified bare sender address. Both emails format it as `StackNova Technologies <configured-address>`; keep the existing verified email unchanged. |
 | `STACKNOVA_LEADS_EMAIL` | Internal recipient for new website lead notifications. Configure the inbox you selected for StackNova. |
 
 The **customer recipient comes dynamically from the validated, trimmed Contact form email**. It is not an environment variable. The admin email uses that same validated customer email as Reply-To; the customer email is never used as FROM.
@@ -53,10 +53,14 @@ Appwrite `log` records which operation was accepted; Appwrite `error` records wh
 
 `functions/submit-enquiry/src/email-templates.js` contains:
 
-- `buildCustomerConfirmationEmail`: StackNova wordmark, thanks/greeting, acknowledgement, selected service summary, review/follow-up expectation, and team signature. No exact response-time promise or internal lead data.
-- `buildAdminLeadEmail`: new-lead heading, New badge, labelled Name/Email/Phone/Company/Service/Source/Status table, multiline Message section, and direct-reply instruction. An omitted company is shown as “Not provided.”
+- `buildCustomerConfirmationEmail`: light off-white background, larger centered CID logo inside a white 600-pixel bordered card, cyan top accent, outlined enquiry badge, greeting, selected-service inset, review/follow-up text, divider, team signature, and centered footer with the current year. The requested wording includes a technical consultant usually following up within 1 business day. No internal lead data is included.
+- `buildAdminLeadEmail`: light New Lead Received heading, NEW WEBSITE ENQUIRY badge, New status badge, labelled Name/Email/Phone/Company/Service/Source/Status table, multiline Message / Project Description section, and direct-reply instruction. It now uses the same light shell/logo/sign-off/footer as the customer email, while preserving its subject, recipient, customer Reply-To, and all useful fields.
 
-Both templates provide HTML and plain text. HTML uses the site's navy (`#070B14`, `#090D18`, `#0B1020`), blue (`#2563EB`), and cyan (`#06B6D4`) palette, readable contrast, fallback fonts, inline styles, fluid table widths, and a 600-pixel maximum card. Every submitted value included in HTML is escaped before interpolation; message line breaks are added only after escaping. There are no external assets, scripts, tracking pixels, or animations.
+Both templates provide HTML and plain text. The customer design follows `docs/email-template/screen.png`, which is a design reference only and is never imported or packaged into the Function. Table layouts, inline styles, safe fallback fonts, and a fixed-width Outlook wrapper keep the layout conservative. Rounded corners may render square in some Outlook versions. Every submitted value included in HTML remains escaped before interpolation; message line breaks are added only after escaping. There are no scripts, tracking pixels, animations, or external CSS.
+
+The approved `brand/t_logo-master.png` is copied unchanged to `functions/submit-enquiry/assets/stacknova-logo.png`. `src/email-assets.js` loads only that deployment-owned asset when building the customer email, after database success and email configuration checks. Resend receives its bytes as an inline attachment with `contentId: "stacknova-logo"`; HTML uses `src="cid:stacknova-logo"` with descriptive alt text. No publicly hosted image URL is required. The admin notification receives the same packaged CID logo attachment. Include `assets/` in every deployment archive. A missing asset is isolated as a customer-email failure; the saved lead and admin email remain unaffected.
+
+Both sender values are constructed in code as `StackNova Technologies <${env.RESEND_FROM_EMAIL}>`. The environment variable remains a bare verified address, with no new variable or sender email. Customer subject and admin Reply-To are unchanged. Customer plaintext matches the redesigned HTML wording, service summary, follow-up, sign-off, and footer.
 
 The official `resend` package is pinned to **6.9.4** only in the Function package and lockfile. This version supports the required send fields and abort signal without SDK-generated raw provider-error logging. The intercepted SDK test checks that behavior; retain that test when upgrading. No React Email template dependency is required.
 
@@ -72,7 +76,7 @@ The official `resend` package is pinned to **6.9.4** only in the Function packag
 For manual deployment, create a **fresh** archive from the updated source and lockfile:
 
 ```powershell
-tar.exe -czf "$env:TEMP/stacknova-submit-enquiry.tar.gz" -C functions/submit-enquiry package.json package-lock.json src
+tar.exe -czf "$env:TEMP/stacknova-submit-enquiry.tar.gz" -C functions/submit-enquiry package.json package-lock.json src assets
 ```
 
 Upload it in Appwrite Console, deploy, and activate it. Do not reuse an older archive. Do not upload `node_modules`, secret files, or frontend code. The existing Contact form and public Function URL need no Phase 4 change.
@@ -100,3 +104,25 @@ Local implementation verification on 2026-10-09: all 42 Function tests and nine 
 - [Resend Node.js sending guide](https://resend.com/docs/send-with-nodejs)
 - [Resend send-email API](https://resend.com/docs/api-reference/emails/send-email)
 - [Resend SDK 6.9.4](https://github.com/resend/resend-node/tree/v6.9.4)
+
+## Customer-email update before Phase 9
+
+Redeploy the Function with the updated source and packaged logo asset. No frontend/admin, Phase 8 query, schema, permission, scope, validation, or public lead-creation changes are part of this update. Keep the existing Function variables and verified sender address. Verify the customer light-card layout and inline logo in Gmail desktop/mobile, Outlook, and Apple Mail after a real deployed submission; confirm both emails show the StackNova Technologies sender name and the admin Reply-To still targets the customer. Automated tests do not prove live delivery or email-client rendering.
+
+Local verification: all 47 Function/Resend tests passed, including the five added template/sender/asset tests. The official SDK send is intercepted; its customer attachment payload is verified as base64 with the matching content ID. No live Resend request was made.
+
+## Latest email consistency + CC/BCC update
+
+The updated `docs/email-template/screen.png` is the visual source of truth. Customer confirmation, internal New Lead Received notification, and direct lead messages now follow one light StackNova system: off-white outer background, centered white bordered 600px card, cyan top accent, 14px radius, consistent typography/spacing/sign-off/footer, and current-year copyright. The **210 x 70px packaged CID logo is inside the main card above the badge**, enlarged about 5% beyond the reference's 200px mark. It no longer sits outside/above the card. Narrow-screen card padding is reduced safely; Outlook retains a conservative fixed-width wrapper.
+
+The two submit-enquiry templates reuse a local light-shell helper because they deploy together. The independently deployed send-lead-email Function contains its own self-contained implementation; there are no runtime cross-Function imports. Existing packaged assets are reused without modifying the artwork. All dynamic HTML values remain escaped, multiline messages remain safely formatted, and every template supplies plaintext.
+
+The admin notification's old dark presentation is completely removed. Name, Email, Phone, Company, Service, Source, Status, message content, subject, admin inbox, and customer Reply-To are preserved. Both send operations now attach the same CID logo. Customer acknowledgement wording, subject, lead-first ordering, independent best-effort email outcomes, CORS, and Contact behavior remain unchanged.
+
+Optional CC/BCC apply only to authenticated direct lead messages, not public enquiry submission. The UI accepts comma-separated addresses; the frontend sends optional normalized arrays. Each list accepts at most 10 supplied entries before case-insensitive deduplication, with trimmed first representations retained. BCC wins over CC; authoritative database lead.email is removed from both lists server-side. Blank lists are omitted. Both frontend and Function validate format/types/controls/blanks/counts. Copy lists appear only in headers, never templates/plaintext/logs. See [Admin lead email](admin-lead-email.md) for the precise request and validation rules.
+
+**Redeploy both Functions** with fresh separate package.json/package-lock.json/src/assets archives, and **rebuild/redeploy the frontend** for the new CC/BCC fields. No new variables, scopes, permissions, schema, or dependencies are required. Keep submit-enquiry at its existing scope/execute configuration and send-lead-email team-only with rows.read.
+
+Live verification remains pending: check all three delivered HTML/plaintext emails, larger inside-card CID logo in desktop/mobile clients, admin notification's customer Reply-To, direct-message sales reply behavior, CC delivery, BCC privacy, duplicate handling, and success/failure draft behavior. Local mocked tests do not send live email or establish inbox delivery.
+
+Local verification on 2026-10-10: all 48 submit-enquiry/Resend tests passed, along with 114 direct-email Function tests and 299 frontend/admin tests (461 total). The final static build passed all checks and eight generated pages. Customer/admin/direct templates were visually compared at desktop width against the updated reference, with narrow-screen layout checks at 360px. The two deployment archives contain package.json, package-lock.json, src/, and assets/; no environment secrets, tests, or node_modules are packaged. No live send or deployment was performed.

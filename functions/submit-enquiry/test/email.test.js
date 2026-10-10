@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
+import { readFileSync, readdirSync } from "node:fs";
+import { buildCustomerLogoAttachment } from "../src/email-assets.js";
 import { createHandler } from "../src/main.js";
 import { buildCustomerConfirmationEmail, buildAdminLeadEmail } from "../src/email-templates.js";
 
@@ -83,12 +85,13 @@ test("saved lead sends both emails with correct addresses, sender, Reply-To, con
   assert.equal(admin.to, env.STACKNOVA_LEADS_EMAIL);
   assert.equal(admin.replyTo, "rahul@example.com");
   for (const email of result.emails) {
-    assert.equal(email.from, env.RESEND_FROM_EMAIL);
+    assert.equal(email.from, `StackNova Technologies <${env.RESEND_FROM_EMAIL}>`);
     assert.notEqual(email.from, customer.to);
     assert.match(email.html, /<!doctype html>/);
-    assert.match(email.html, /#070B14/);
-    assert.match(email.html, /#06B6D4/);
   }
+  assert.match(customer.html, /#F4F7FA/);
+  assert.match(customer.html, /#06B6D4/);
+  assert.match(admin.html, /#F4F7FA/); assert.doesNotMatch(admin.html, /#070B14|#0B1020|#090D18|#253047/);
   assert.equal(customer.subject, "We received your enquiry — StackNova Technologies");
   assert.equal(admin.subject, "New Website Enquiry — Web Development — Rahul Sharma");
   for (const content of [customer.html, customer.text]) {
@@ -259,7 +262,7 @@ test("both templates escape every user-controlled HTML field and preserve multil
   }
   assert.match(buildAdminLeadEmail({ ...payload, message: "a\r\nb\nc\rd" }).html, /a<br>b<br>c<br>d/);
   for (const email of [buildCustomerConfirmationEmail(payload), buildAdminLeadEmail(payload)])
-    assert.doesNotMatch(email.html, /<script|<iframe|<img|@import|<link|animation:|display:grid|display:flex/i);
+    assert.doesNotMatch(email.html, /<script|<iframe|@import|<link|animation:|display:grid|display:flex/i);
   assert.match(buildAdminLeadEmail({ ...payload, company: "" }).text, /Company: Not provided/);
 });
 
@@ -296,11 +299,88 @@ test("official Resend SDK is intercepted: correct wire addresses, post-save orde
     assert.equal(requests[0].to, "rahul@example.com");
     assert.equal(requests[1].to, env.STACKNOVA_LEADS_EMAIL);
     assert.equal(requests[1].reply_to, "rahul@example.com");
-    assert.equal(requests[1].from, env.RESEND_FROM_EMAIL);
+    assert.equal(requests[0].attachments[0].content_id, "stacknova-logo");
+    assert.equal(requests[0].attachments[0].content, buildCustomerLogoAttachment().content.toString("base64"));
+    assert.equal(requests[1].attachments[0].content_id, "stacknova-logo");
+    assert.equal(requests[1].attachments[0].content, buildCustomerLogoAttachment().content);
+    for (const request of requests) assert.equal(request.from, `StackNova Technologies <${env.RESEND_FROM_EMAIL}>`);
     assert.equal(result.errors.length, 1);
     assert.equal(result.logs.length, 1);
     assert.ok(!JSON.stringify(result.errors).includes(env.RESEND_API_KEY));
     assert.ok(!JSON.stringify(result.errors).includes("raw-response-marker"));
     assert.equal(consoleError.mock.callCount(), 0, "SDK must not automatically log raw provider errors");
   } finally { fetchMock.mock.restore(); consoleError.mock.restore(); }
+});
+
+test("customer light card includes reference wording, service, branding, logo, and matching plaintext", () => {
+  const email = buildCustomerConfirmationEmail({ name: "Alex", service: "Web Development" });
+  for (const value of ["Thanks for reaching out", "ENQUIRY RECEIVED", "Hi Alex,", "Web Development",
+    "YOUR SELECTED SERVICE", "StackNova Technologies", "review your requirements",
+    "A dedicated technical consultant usually follows up within 1 business day.",
+    "The StackNova Technologies Team", "Thoughtful engineering. Clear communication.",
+    "All rights reserved."]) {
+    assert.ok(email.html.includes(value), `HTML: ${value}`);
+    assert.ok(email.text.includes(value), `plaintext: ${value}`);
+  }
+  assert.match(email.html, /bgcolor="#F4F7FA"/);
+  assert.match(email.html, /bgcolor="#FFFFFF"/);
+  assert.match(email.html, /max-width:600px/);
+  assert.match(email.html, /src="cid:stacknova-logo" alt="StackNova Technologies"/);
+  assert.equal((email.html.match(/<img\b/g) || []).length, 1, "only the trusted static logo image");
+  assert.doesNotMatch(email.text, /<table|<img|<p\b/);
+});
+
+test("customer footer derives the current year on each template invocation", () => {
+  const clock = mock.method(Date.prototype, "getFullYear", () => 2031);
+  try {
+    const email = buildCustomerConfirmationEmail(payload);
+    for (const content of [email.html, email.text])
+      assert.match(content, /© 2031 StackNova Technologies\. All rights reserved\./);
+  } finally { clock.mock.restore(); }
+  assert.ok(buildCustomerConfirmationEmail(payload).text.includes(`© ${new Date().getFullYear()}`));
+});
+
+test("both send operations brand the configured verified address without changing recipients or Reply-To", async () => {
+  const result = await invoke({ config: { ...env, RESEND_FROM_EMAIL: "sales@stacknova.in" } });
+  assertSavedSuccess(result);
+  for (const email of result.emails) assert.equal(email.from, "StackNova Technologies <sales@stacknova.in>");
+  assert.equal(result.emails[0].to, "rahul@example.com");
+  assert.equal(result.emails[1].to, env.STACKNOVA_LEADS_EMAIL);
+  assert.equal(result.emails[1].replyTo, "rahul@example.com");
+});
+
+test("customer and admin use the supplied packaged master PNG as a CID attachment", async () => {
+  const attachment = buildCustomerLogoAttachment();
+  assert.equal(attachment.contentId, "stacknova-logo");
+  assert.equal(attachment.contentType, "image/png");
+  assert.deepEqual(Buffer.from(attachment.content, "base64"), readFileSync(new URL("../../../brand/t_logo-master.png", import.meta.url)));
+  const result = await invoke();
+  assert.deepEqual(result.emails[0].attachments, [attachment]);
+  assert.deepEqual(result.emails[1].attachments, [attachment]);
+});
+
+test("Function runtime has no dependency on design-reference folders or screenshots", () => {
+  const directory = new URL("../src/", import.meta.url);
+  for (const filename of readdirSync(directory).filter((name) => name.endsWith(".js"))) {
+    const source = readFileSync(new URL(filename, directory), "utf8");
+    assert.doesNotMatch(source, /(?:admin|docs)\/email-template|screen\.png|brand\/t_logo-master/);
+  }
+});
+
+test("both enquiry templates place the larger CID logo inside the light main card", () => {
+  for (const email of [buildCustomerConfirmationEmail(payload),buildAdminLeadEmail(payload)]) {
+    const stack=[]; let logos=0;
+    for (const [tag] of email.html.matchAll(/<\/?[a-z][^>]*>/gi)) {
+      const name=tag.match(/^<\/?([a-z0-9]+)/i)[1].toLowerCase();
+      if(tag.startsWith("</")){ const index=stack.map(item=>item.name).lastIndexOf(name); if(index>=0) stack.splice(index); continue; }
+      if(name==="img" && tag.includes("cid:stacknova-logo")) {
+        logos++; assert.ok(stack.some(item=>item.tag.includes('class="email-card"') && item.tag.includes('bgcolor="#FFFFFF"')));
+        assert.match(tag,/width="210" height="70"/);
+      }
+      if(!["img","meta","br","link","hr"].includes(name)) stack.push({name,tag});
+    }
+    assert.equal(logos,1); assert.match(email.html,/border-radius:14px/); assert.match(email.html,/bgcolor="#F4F7FA"/);
+    assert.doesNotMatch(email.html,/#070B14|#0B1020|#090D18|#253047/);
+    for(const value of ["Best regards,","The StackNova Technologies Team","Thoughtful engineering. Clear communication.","All rights reserved."]){assert.ok(email.html.includes(value)); assert.ok(email.text.includes(value));}
+  }
 });

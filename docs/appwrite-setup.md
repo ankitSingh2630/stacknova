@@ -1,5 +1,7 @@
 # Appwrite frontend foundation — Phase 2, with Phase 3 enquiry integration
 
+> Hard-delete update: Current admin permission requirements supersede the historical foundation below: on leads ? Security grant StackNova Admins Read, Update and Delete; keep Create disabled and grant no Any/Guests/Users access. deleteLead uses deleteRow and never writes deletedAt. Keep the deletedAt column/index and query guards temporarily for historical rows. Manually inspect populated markers and decide which rows to permanently delete; do not clear markers or drop schema. Public creation and both Functions are unchanged. Rebuild/redeploy only the frontend. See [lead management](phase-7-lead-management.md).
+
 ## Phase 3 update
 
 Public enquiries now use the `submit-enquiry` Appwrite Function. See [Phase 3 setup and deployment](phase-3-enquiry.md) for the complete instructions. `Contact.tsx` invokes its public HTTPS URL with `fetch`; it never imports the browser SDK or writes directly to TablesDB. The exported SDK services remain preparation for later phases, and admin screens still use mock data.

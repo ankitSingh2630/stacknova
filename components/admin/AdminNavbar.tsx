@@ -15,7 +15,6 @@ export default function AdminNavbar() {
   const toggleRef = useRef<HTMLButtonElement>(null);
   const isLead = pathname.startsWith("/admin/lead/") || pathname === "/admin/lead";
   const isLeads = !isLead && pathname.startsWith("/admin/leads");
-  const label = isLead ? "Lead Details" : isLeads ? "Leads List" : "Dashboard";
   useEffect(() => { setOpen(false); }, [pathname]);
   useEffect(() => {
     if (!open) return;
@@ -26,15 +25,18 @@ export default function AdminNavbar() {
     return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("pointerdown", onPointer); };
   }, [open]);
   const links = <>
-    <Link href="/admin/" className={styles.navLink} aria-current={!isLeads && !isLead ? "page" : undefined} onClick={() => setOpen(false)}><AdminIcon name="grid" />Dashboard</Link>
-    <Link href="/admin/leads/" className={styles.navLink} aria-current={isLeads || isLead ? "page" : undefined} onClick={() => setOpen(false)}><AdminIcon name="leads" />Leads</Link>
-    <button type="button" className={styles.navLink + " " + styles.logoutButton} disabled={loggingOut} onClick={() => void logout()}><AdminIcon name="logout" />{loggingOut ? "Signing out…" : "Logout"}</button>
+    <Link href="/admin/" className={styles.navLink} aria-current={!isLeads && !isLead ? "page" : undefined} onClick={() => setOpen(false)}>Dashboard</Link>
+    <Link href="/admin/leads/" className={styles.navLink} aria-current={isLeads || isLead ? "page" : undefined} onClick={() => setOpen(false)}>Leads</Link>
+    <button type="button" className={styles.navLink + " " + styles.logoutButton} disabled={loggingOut} onClick={() => void logout()}>{loggingOut ? "Signing out…" : "Logout"}</button>
   </>;
   return <>
     <header className={styles.navbar}>
       <div className={styles.navInner}>
-        {isLead && <Link href="/admin/leads/" aria-label="Back to leads"><AdminIcon name="back" /></Link>}
-        <Link href="/admin/" className={styles.brand} aria-label="StackNova admin dashboard"><span className={styles.brandMark}><AdminIcon name="code" size={22} /></span><span><span className={styles.brandName}>{isLead ? "Lead Details" : "StackNova"}</span>{!isLead && <span className={styles.brandSub}>{label}</span>}</span></Link>
+        <Link href="/admin/" className={styles.brand} aria-label="StackNova admin dashboard">
+          {/* Same deployed artwork and sizing as the public Navbar; master: brand/t_logo-master.png. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="StackNova Technologies logo" className="h-14 w-auto sm:h-22" width={120} height={40} decoding="async" />
+        </Link>
         <nav className={styles.topLinks} aria-label="Admin navigation">{links}</nav>
         <span className={styles.avatar} aria-label={state.status === "authorized" ? `Signed in as ${state.user.name || state.user.email}` : "Administrator"}>SN</span>
         <button ref={toggleRef} className={styles.iconButton + " " + styles.menuButton} aria-label={open ? "Close navigation" : "Open navigation"} aria-expanded={open} aria-controls="admin-mobile-menu" onClick={() => setOpen(value => !value)}><AdminIcon name={open ? "close" : "menu"} /></button>
@@ -42,6 +44,5 @@ export default function AdminNavbar() {
       {open && <div ref={menuRef} id="admin-mobile-menu" className={styles.mobileMenu}><nav aria-label="Mobile admin navigation">{links}</nav></div>}
     </header>
     {logoutError && <p className={styles.logoutError} role="alert" aria-live="polite">{logoutError}</p>}
-    {!isLeads && !isLead && <nav className={styles.bottomNav} aria-label="Admin quick navigation">{links}</nav>}
   </>;
 }

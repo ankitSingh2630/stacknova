@@ -47,17 +47,21 @@ export default function LoginForm() {
     : state.status === "signedOut" || state.status === "error" ? state.message : "");
   return <div className={styles.loginPage}>
     <header className={styles.loginHeader}><div className={styles.navInner}>
-      <Link href="/" className={styles.brand}><span className={styles.brandMark}><AdminIcon name="code" size={22} /></span><span><span className={styles.brandName}>StackNova</span><span className={styles.brandSub}>Ops Core · Admin Portal</span></span></Link>
+      <Link href="/" className={styles.brand} aria-label="StackNova Technologies home">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.png" alt="StackNova Technologies logo" className="h-14 w-auto sm:h-22" width={120} height={40} decoding="async" />
+      </Link>
+      <span className="text-sm text-muted">Admin</span>
     </div></header>
     <main className={styles.loginMain}>
-      <span className={styles.loginEyebrow}><span className={styles.dot} />Lead Ops · Admin Portal</span>
+      <span className={styles.loginEyebrow}><span className={styles.dot} />StackNova administration</span>
       <h1 className={styles.loginTitle}>Admin Login</h1>
       <p className={styles.loginIntro}>Sign in with your authorized administrator account to access the lead workspace.</p>
       {waiting && !submitting ? <p role="status" className={styles.authState}>{state.status === "authorized" ? "Opening admin workspace…" : "Checking admin session…"}</p> : <>
         <form className={styles.loginCard} onSubmit={onSubmit} aria-busy={submitting}>
           <div className={styles.loginCardTop}><span><AdminIcon name="shield" size={16} />ADMIN ACCESS</span><small>STACKNOVA</small></div>
           <div className={styles.loginField}>
-            <div className={styles.labelRow}><label htmlFor="admin-email">Email Address</label><span className={styles.workTag}>WORK ACCOUNT</span></div>
+            <div className={styles.labelRow}><label htmlFor="admin-email">Email Address</label></div>
             <div className={styles.loginInputWrap}><AdminIcon name="user" /><input id="admin-email" type="email" name="email" autoComplete="email" className={styles.loginInput} required disabled={submitting} aria-describedby={message ? "login-error" : undefined} onChange={() => setValidation("")} /></div>
           </div>
           <div className={styles.loginField}>

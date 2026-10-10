@@ -153,12 +153,12 @@ test("UI renders server rows directly and global services, without browser filte
   assert.deepEqual(calls, ["AnKiT"]);
   assert.match(renderToStaticMarkup(list.render()), /of 137 leads/);
 });
-test("archive final page item refetches authoritative total and moves to prior valid page", async () => {
-  const records = Array.from({ length: 11 }, (_, index) => ({ ...lead, id: `lead-${index}` })); let archived = false; const calls = [];
-  const state = await start({ reader: { list: async query => { calls.push(query.page); const active = archived ? records.slice(0, 10) : records; return ok(active.slice((query.page - 1) * 5, query.page * 5), active.length); } },
-    writer: { archive: async id => { archived = true; return { ok: true, lead: { ...records.find(row => row.id === id), deletedAt: "2026-10-10T00:00:00.000Z" } }; } } });
+test("delete final page item refetches authoritative total and moves to prior valid page", async () => {
+  const records = Array.from({ length: 11 }, (_, index) => ({ ...lead, id: `lead-${index}` })); let deleted = false; const calls = [];
+  const state = await start({ reader: { list: async query => { calls.push(query.page); const active = deleted ? records.slice(0, 10) : records; return ok(active.slice((query.page - 1) * 5, query.page * 5), active.length); } },
+    writer: { delete: async id => { deleted = true; return { ok: true, id }; } } });
   state.value().setPage(3); await tick();
-  assert.equal(await state.value().softDeleteLead("lead-10"), true); await tick();
+  assert.equal(await state.value().deleteLead("lead-10"), true); await tick();
   assert.deepEqual(calls, [1, 3, 3, 2]); assert.equal(state.value().total, 10); assert.equal(state.value().query.page, 2);
   assert.equal(state.value().leads.length, 5); assert.equal(state.value().getLeadState("lead-10").status, "notFound");
 });
@@ -183,35 +183,65 @@ test("status reconciliation uses filtered server total and refreshes exact dashb
   assert.equal(state.value().getLeadState(lead.id).lead.status, "Contacted");
   assert.equal(state.value().dashboard.summary.counts.New, 0); assert.equal(state.value().dashboard.summary.counts.Contacted, 1);
 });
-test("confirmed archive remains successful and unavailable if refresh fails", async () => {
+test("confirmed delete remains successful and unavailable if refresh fails", async () => {
   let reads = 0;
   const state = await start({ reader: { list: async () => ++reads === 1 ? ok() : readError("failure") },
-    writer: { archive: async () => ({ ok: true, lead: { ...lead, deletedAt: "2026-10-10T01:00:00.000Z" } }) } });
-  assert.equal(await state.value().softDeleteLead(lead.id), true); await tick();
+    writer: { delete: async () => ({ ok: true, id: lead.id }) } });
+  assert.equal(await state.value().deleteLead(lead.id), true); await tick();
   assert.equal(state.value().getLeadState(lead.id).status, "notFound"); assert.equal(state.value().getMutationState(lead.id).success, true);
   assert.equal(state.value().leads.length, 0); assert.ok(state.value().error);
 });
-test("status/archive refresh loaded dashboard; notes do not query or reset page", async () => {
+test("confirmed delete removes recent cache and stays successful if both refreshes fail", async () => {
+  let lists = 0, summaries = 0;
+  const refresh = deferred();
+  const state = await start({ reader: { list: async () => ++lists === 1 ? ok() : readError("failure") },
+    dashboardReader: { summary: async () => ++summaries === 1 ? { ok: true, summary: summary() } : refresh.promise },
+    writer: { delete: async () => ({ ok: true, id: lead.id }) } });
+  await state.value().ensureDashboard();
+  assert.equal(await state.value().deleteLead(lead.id), true);
+  assert.equal(state.value().dashboard.summary.recent.length, 0);
+  refresh.resolve(readError("failure")); await tick();
+  assert.equal(state.value().notice, "Lead deleted successfully.");
+  assert.equal(state.value().getMutationState(lead.id).success, true);
+  assert.equal(state.value().getMutationState(lead.id).message, "Lead deleted successfully.");
+  assert.equal(state.value().getLeadState(lead.id).status, "notFound");
+  assert.ok(state.value().error); assert.ok(state.value().dashboard.error);
+});
+
+test("older dashboard response cannot restore a permanently deleted recent lead", async () => {
+  const old = deferred(); let requests = 0, deleted = false;
+  const state = await start({ reader: { list: async () => deleted ? ok([], 0) : ok() },
+    dashboardReader: { summary: async () => ++requests === 2 ? old.promise : { ok: true, summary: deleted ? summary([], 0) : summary() } },
+    writer: { delete: async () => { deleted = true; return { ok: true, id: lead.id }; } } });
+  await state.value().ensureDashboard();
+  const reading = state.value().refreshDashboard();
+  assert.equal(await state.value().deleteLead(lead.id), true); await tick();
+  old.resolve({ ok: true, summary: summary() }); await reading;
+  assert.equal(state.value().dashboard.summary.recent.length, 0);
+  assert.equal(state.value().dashboard.summary.total, 0);
+});
+
+test("status/delete refresh loaded dashboard; notes do not query or reset page", async () => {
   let summaries = 0, lists = 0;
   const state = await start({ reader: { list: async () => { lists++; return ok(); } },
     dashboardReader: { summary: async () => { summaries++; return { ok: true, summary: summary() }; } }, writer: {
       notes: async (id, notes) => ({ ok: true, lead: { ...lead, notes, updatedAt: "2026-10-10T01:00:00.000Z" } }),
       status: async () => ({ ok: true, lead: { ...lead, status: "Contacted" } }),
-      archive: async () => ({ ok: true, lead: { ...lead, deletedAt: "2026-10-10T01:00:00.000Z" } }),
+      delete: async () => ({ ok: true, id: lead.id }),
     } });
   await state.value().ensureDashboard(); state.value().setPage(3); await tick();
   const before = lists;
   assert.equal(await state.value().addLeadNote(lead.id, "New note"), true); await tick();
   assert.equal(lists, before); assert.equal(summaries, 1); assert.equal(state.value().query.page, 3);
   await state.value().updateLeadStatus(lead.id, "Contacted"); await tick(); assert.equal(summaries, 2);
-  await state.value().softDeleteLead(lead.id); await tick(); assert.equal(summaries, 3);
+  await state.value().deleteLead(lead.id); await tick(); assert.equal(summaries, 3);
 });
-test("older list response cannot restore a lead after confirmed archive", async () => {
+test("older list response cannot restore a lead after confirmed delete", async () => {
   const older = deferred(); let reads = 0;
   const state = await start({ reader: { list: async () => ++reads === 1 ? ok() : reads === 2 ? older.promise : ok([], 0) },
-    writer: { archive: async () => ({ ok: true, lead: { ...lead, deletedAt: "2026-10-10T00:00:00.000Z" } }) } });
+    writer: { delete: async () => ({ ok: true, id: lead.id }) } });
   const refresh = state.value().refreshLeads();
-  await state.value().softDeleteLead(lead.id); await tick();
+  await state.value().deleteLead(lead.id); await tick();
   older.resolve(ok()); await refresh;
   assert.equal(state.value().leads.length, 0); assert.equal(state.value().total, 0);
 });
@@ -259,27 +289,27 @@ for (const loss of ["signedOut", "forbidden", "identity", "unmount"]) {
     assert.ok(!state.value().leads.some(row => row.name === "Stale Private Result"));
   });
 }
-test("dashboard uses full totals independently of list filters and calculates Open Pipeline locally", () => {
+test("dashboard keeps full status totals independently of list filters without Open Pipeline", () => {
   const value = loaded([lead], 2); value.dashboard.summary = { ...summary(), total: 137, counts: { New: 40, Contacted: 30, "In Progress": 20, Converted: 25, Closed: 22 } };
   const ui = harness("components/admin/Dashboard.tsx", { leadsValue: value }); const text = renderToStaticMarkup(ui.render());
-  assert.ok(text.includes("137</p>")); assert.match(text, /90 active leads require follow-up/); assert.ok(!text.includes("loaded batch"));
+  assert.ok(text.includes("137</p>")); assert.doesNotMatch(text, /Open Pipeline|Review|active leads require follow-up/); assert.ok(!text.includes("loaded batch"));
 });
-test("Review requests recent open leads only when selected and never on ordinary renders", () => {
-  let calls = 0; const value = { ...loaded(), ensureOpenLeads: async () => { calls++; } };
-  const ui = harness("components/admin/Dashboard.tsx", { leadsValue: value }); ui.render(); ui.flush(); assert.equal(calls, 0);
-  ui.find(ui.render(), node => node.type === "button" && node.props.children === "Review").props.onClick();
-  ui.render(); ui.flush(); assert.equal(calls, 1);
-  for (let i = 0; i < 4; i++) { ui.render(); ui.flush(); } assert.equal(calls, 1);
-  assert.match(renderToStaticMarkup(ui.render()), /Recent Open Leads/);
+test("dashboard has no Review toggle or recent-open query/provider path", () => {
+  const ui = harness("components/admin/Dashboard.tsx", { leadsValue: loaded() });
+  ui.render(); ui.flush(); assert.doesNotMatch(renderToStaticMarkup(ui.render()), /Review|Recent Open Leads|Open Pipeline/);
+  for (const file of ["components/admin/Dashboard.tsx", "components/admin/LeadsProvider.tsx", "lib/admin/dashboard.ts"])
+    assert.doesNotMatch(fs.readFileSync(file, "utf8"), /ensureOpenLeads|refreshOpenLeads|refreshOpen|openLeads|async open\(/);
 });
-test("dashboard and recent-open responses after logout cannot restore private summaries", async () => {
-  const dashboard = deferred(), open = deferred();
-  const state = await start({ dashboardReader: { summary: () => dashboard.promise, open: () => open.promise } });
-  const reading = state.value().ensureDashboard(), reviewing = state.value().ensureOpenLeads();
+
+test("dashboard response after logout cannot restore private summaries", async () => {
+  const dashboard = deferred();
+  const state = await start({ dashboardReader: { summary: () => dashboard.promise } });
+  const reading = state.value().ensureDashboard();
   state.ui.setAuth({ ...auth, state: { status: "signedOut" } }); state.ui.render(); state.ui.flush();
-  dashboard.resolve({ ok: true, summary: summary() }); open.resolve(ok([lead], 1)); await reading; await reviewing;
-  assert.equal(state.value().dashboard.summary, null); assert.equal(state.value().openLeads.leads.length, 0);
+  dashboard.resolve({ ok: true, summary: summary() }); await reading;
+  assert.equal(state.value().dashboard.summary, null);
 });
+
 test("Strict Mode replay restarts invalidated pending reads without sticking in loading", async () => {
   const old = deferred(); let calls = 0;
   const ui = harness("components/admin/LeadsProvider.tsx", { reader: { list: async () => ++calls === 1 ? old.promise : ok() } });

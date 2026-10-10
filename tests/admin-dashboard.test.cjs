@@ -17,7 +17,7 @@ test("dashboard uses six centralized queries and maps only full recent rows", as
   assert.equal(result.summary.recent[0].company, ""); assert.equal(result.summary.recent[0].notes, "");
   assert.deepEqual(plain(result.summary.counts), { New: 5, Contacted: 7, "In Progress": 8, Converted: 9, Closed: 13 });
   assert.equal(calls.length, 6);
-  assert.deepEqual(calls[0].queries, [Query.isNull("deletedAt"), Query.orderDesc("$createdAt"), Query.orderDesc("$id"), Query.limit(3)]);
+  assert.deepEqual(calls[0].queries, [Query.isNull("deletedAt"), Query.orderDesc("$createdAt"), Query.orderDesc("$id"), Query.limit(5)]);
   types.leadStatuses.forEach((status, index) => assert.deepEqual(calls[index + 1].queries, [Query.isNull("deletedAt"), Query.equal("status", status), Query.limit(1), Query.select(["$id"])]));
   for (const call of calls) { assert.equal(call.total, true); assert.equal(call.ttl, 0); assert.equal(call.databaseId, config.databaseId); assert.equal(call.tableId, config.leadsTableId); }
 });
@@ -37,12 +37,18 @@ test("malformed recent row or count total causes safe summary failure", async ()
     assert.equal((await reader.summary()).ok, false);
   }
 });
-test("Review uses only one small active recent-open query", async () => {
-  let call; const reader = api.createDashboardReader({ config, tablesDB: { listRows: async args => { call = plain(args); return { rows: [row], total: 20 }; } } });
-  const result = await reader.open(); assert.equal(result.ok, true); assert.equal(result.total, 20);
-  assert.deepEqual(call.queries, [Query.isNull("deletedAt"), Query.equal("status", ["New", "Contacted", "In Progress"]), Query.orderDesc("$createdAt"), Query.orderDesc("$id"), Query.limit(3)]);
+test("dashboard maps five newest active leads and excludes archived rows defensively", async () => {
+  const rows = Array.from({ length: 5 }, (_, index) => ({ ...row, $id: `recent-${index}`, $createdAt: `2026-10-${String(10-index).padStart(2,"0")}T03:30:00.000Z` }));
+  let calls = 0;
+  const reader = api.createDashboardReader({ config, tablesDB: { listRows: async () => ++calls === 1 ? { rows, total: 42 } : { rows: [], total: 0 } } });
+  const result = await reader.summary(); assert.equal(result.ok, true); assert.equal(result.summary.recent.length, 5);
+  assert.deepEqual(result.summary.recent.map(lead => lead.id), rows.map(row => row.$id));
+  rows[0].deletedAt = "2026-10-10T04:00:00.000Z"; calls = 0;
+  const active = await reader.summary(); assert.equal(active.summary.recent.length, 4); assert.equal(active.summary.total, 42);
+  assert.equal(typeof reader.open, "undefined");
 });
+
 test("missing dashboard configuration makes no SDK calls", async () => {
   let calls = 0; const reader = api.createDashboardReader({ config: { ...config, leadsTableId: "" }, tablesDB: { listRows: async () => { calls++; } } });
-  assert.equal((await reader.summary()).ok, false); assert.equal((await reader.open()).ok, false); assert.equal(calls, 0);
+  assert.equal((await reader.summary()).ok, false); assert.equal(calls, 0);
 });

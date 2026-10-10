@@ -2,19 +2,133 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { harness, loaded, lead, api, mutationApi, auth, tick, deferred, plain, renderToStaticMarkup, statistics, summary } = require("./helpers/admin-ui.cjs");
 const updatedAt = "2026-10-09T10:15:00.000Z";
+test("hard delete waits for SDK confirmation without optimistic cache removal or loading unused dashboard", async () => {
+  const pending = deferred(), calls = [];
+  const writer = mutationApi.createLeadMutations({ config: { databaseId: "test-db", leadsTableId: "test-leads" }, tablesDB: {
+    deleteRow: params => { calls.push(plain(params)); return pending.promise; },
+    updateRow: () => { throw new Error("Delete must not update a row"); },
+  } });
+  const state = await store({ writer });
+  const deleting = state.value().deleteLead(lead.id);
+  assert.deepEqual(calls, [{ databaseId: "test-db", tableId: "test-leads", rowId: lead.id }]);
+  assert.equal(state.value().leads[0].id, lead.id);
+  assert.equal(state.value().getLeadState(lead.id).status, "loaded");
+  assert.equal(state.value().notice, "");
+  assert.equal(state.value().getMutationState(lead.id).pending, true);
+  pending.resolve({}); assert.equal(await deleting, true); await tick();
+  assert.equal(state.value().getLeadState(lead.id).status, "notFound");
+  assert.equal(state.value().leads.length, 0);
+  assert.equal(state.value().dashboard.initialized, false);
+});
+
+for (const kind of ["session", "access", "notFound", "failure"]) {
+  test(`delete ${kind} preserves error architecture without false success`, async () => {
+    let checks = 0;
+    const state = await store({ writer: { delete: () => failure("delete", kind) },
+      authValue: { ...auth, recheckSession: async () => { checks++; } } });
+    await state.value().ensureDashboard();
+    assert.equal(await state.value().deleteLead(lead.id), false); await tick();
+    assert.equal(state.value().notice, "");
+    assert.equal(state.value().hasPendingMutations, false);
+    assert.equal(checks, kind === "session" ? 1 : 0);
+    if (kind === "session") {
+      assert.equal(state.value().leads.length, 0);
+      assert.equal(state.value().dashboard.summary, null);
+      await state.value().deleteLead(lead.id); assert.equal(state.writes.length, 1);
+    } else if (kind === "notFound") {
+      assert.equal(state.value().getLeadState(lead.id).status, "notFound");
+      assert.equal(state.value().leads.length, 0);
+      assert.equal(state.value().dashboard.summary.total, 0);
+      assert.equal(state.value().dashboard.summary.recent.length, 0);
+      assert.equal(state.value().getMutationState(lead.id).message, mutationApi.mutationMessages.unavailable);
+    } else {
+      assert.deepEqual(plain(state.value().getLeadState(lead.id).lead), plain(lead));
+      assert.equal(state.value().leads.length, 1);
+      assert.equal(state.value().getMutationState(lead.id).message, mutationApi.mutationMessages.delete);
+    }
+  });
+}
+
+for (const invalidation of ["signedOut", "forbidden", "identity", "unmount"]) {
+  test(`delete response after ${invalidation} cannot change current private state or report success`, async () => {
+    const pending = deferred();
+    const state = await store({ writer: { delete: () => pending.promise } });
+    const deleting = state.value().deleteLead(lead.id);
+    if (invalidation === "unmount") state.ui.unmount();
+    else { state.ui.setAuth({ ...auth, state: invalidation === "identity" ? { status: "authorized", user: { $id: "other-admin" } } : { status: invalidation } }); state.ui.render(); state.ui.flush(); }
+    pending.resolve({ ok: true, id: lead.id });
+    assert.equal(await deleting, false);
+    assert.equal(state.value().notice, "");
+    if (invalidation === "unmount") assert.equal(state.value().getLeadState(lead.id).status, "loaded");
+  });
+}
+
+test("delete dialog restores focus, labels destructive action, and blocks Escape while deleting", () => {
+  let focused = 0, calls = 0;
+  const ui = detail({ deleteLead: async () => { calls++; return true; } });
+  const open = ui.find(ui.render(), node => node.type === "button" && !node.props.type && [node.props.children].flat(Infinity).includes("Delete Lead"));
+  open.ref.current = { focus: () => { focused++; } };
+  const dialog = ui.find(ui.render(), node => node.type === "dialog");
+  dialog.ref.current = { showModal() {}, close() {} };
+  assert.equal(open.props.className, "dangerButton");
+  assert.equal(dialog.props["aria-labelledby"], "delete-title");
+  assert.equal(dialog.props["aria-describedby"], "delete-description");
+  open.props.onClick();
+  const buttons = ui.find(ui.render(), node => node.type === "dialog").props.children.flat(Infinity).find(node => node?.props?.className === "dialogActions").props.children;
+  assert.equal(buttons[0].props.autoFocus, true);
+  buttons[0].props.onClick(); assert.equal(focused, 1); assert.equal(calls, 0);
+  dialog.props.onCancel({ preventDefault() { throw new Error("Idle Escape should close"); } });
+  dialog.props.onClose(); assert.equal(focused, 2);
+  ui.setLeads({ ...loaded(), getLeadState: () => ({ status: "loaded", lead }), ensureLead: async () => {},
+    getMutationState: () => ({ operation: "delete", pending: true, message: "", success: false }) });
+  const busy = ui.find(ui.render(), node => node.type === "dialog");
+  let prevented = false; busy.props.onCancel({ preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  for (const button of busy.props.children.flat(Infinity).find(node => node?.props?.className === "dialogActions").props.children) assert.equal(button.props.disabled, true);
+  assert.match(renderToStaticMarkup(ui.render()), /Deleting/);
+});
+
+test("delete completion after detail unmount cannot redirect", async () => {
+  const pending = deferred(); const ui = detail({ deleteLead: () => pending.promise });
+  ui.render(); ui.flush();
+  const dialog = ui.find(ui.render(), node => node.type === "dialog"); dialog.ref.current = { showModal() {}, close() {} };
+  ui.find(ui.render(), node => node.type === "button" && !node.props.type && [node.props.children].flat(Infinity).includes("Delete Lead")).props.onClick();
+  const buttons = ui.find(ui.render(), node => node.type === "dialog").props.children.flat(Infinity).find(node => node?.props?.className === "dialogActions").props.children;
+  ui.flush(); buttons[1].props.onClick(); ui.unmount(); pending.resolve(true); await tick();
+  assert.deepEqual(ui.redirects, []);
+});
+
+test("successful cache removal cannot block the detail page redirect", async () => {
+  const pending = deferred(); const ui = detail({ deleteLead: () => pending.promise });
+  ui.render(); ui.flush();
+  const dialog = ui.find(ui.render(), node => node.type === "dialog"); dialog.ref.current = { showModal() {}, close() {} };
+  ui.find(ui.render(), node => node.type === "button" && !node.props.type && [node.props.children].flat(Infinity).includes("Delete Lead")).props.onClick();
+  const buttons = ui.find(ui.render(), node => node.type === "dialog").props.children.flat(Infinity).find(node => node?.props?.className === "dialogActions").props.children;
+  buttons[1].props.onClick();
+  ui.setLeads({ ...loaded(), getLeadState: () => ({ status: "notFound" }), ensureLead: async () => {} });
+  assert.match(renderToStaticMarkup(ui.render()), /Lead unavailable/);
+  pending.resolve(true); await tick();
+  assert.deepEqual(ui.redirects, ["/admin/leads/"]);
+});
+
+test("active deletion UI has no archive terminology and mutation helper never writes deletedAt", () => {
+  const fs = require("node:fs");
+  for (const path of ["components/admin/LeadDetails.tsx", "components/admin/LeadsList.tsx", "components/admin/Dashboard.tsx"])
+    assert.doesNotMatch(fs.readFileSync(path, "utf8"), /archive|archiving|soft delete|remove from active leads/i);
+  assert.doesNotMatch(fs.readFileSync("lib/admin/lead-mutations.ts", "utf8"), /deletedAt|new Date|softDeleteLead/);
+});
 const success = (value, fields) => ({ ok: true, lead: { ...value, ...fields, updatedAt } });
 async function store({ leads = [lead], total = leads.length, writer = {}, authValue = auth, detail, reader } = {}) {
   const writes = [];
   const records = new Map([...leads, ...(detail ? [detail] : [])].map(row => [row.id, row]));
   let serverTotal = total;
   const wrapped = {};
-  for (const operation of ["status", "notes", "archive"]) wrapped[operation] = async (id, value) => {
+  for (const operation of ["status", "notes", "delete"]) wrapped[operation] = async (id, value) => {
     writes.push([operation, id, value]);
-    const commit = result => { if (result.ok) { if (result.lead.deletedAt && !records.get(id)?.deletedAt) serverTotal = Math.max(0, serverTotal - 1); records.set(id, result.lead); } else if (result.kind === "notFound") { if (records.has(id)) serverTotal = Math.max(0, serverTotal - 1); records.delete(id); } return result; };
+    const commit = result => { if (result.ok && operation === "delete") { if (records.has(id)) serverTotal = Math.max(0, serverTotal - 1); records.delete(id); } else if (result.ok) { if (result.lead.deletedAt && !records.get(id)?.deletedAt) serverTotal = Math.max(0, serverTotal - 1); records.set(id, result.lead); } else if (result.kind === "notFound") { if (records.has(id)) serverTotal = Math.max(0, serverTotal - 1); records.delete(id); } return result; };
     if (writer[operation]) return commit(await writer[operation](id, value));
     const row = leads.find(item => item.id === id) || detail;
-    return commit(success(row, operation === "status" ? { status: value } : operation === "notes" ? { notes: value.trim() }
-      : { deletedAt: "2026-10-09T10:00:00.000Z" }));
+    return commit(operation === "delete" ? { ok: true, id } : success(row, operation === "status" ? { status: value } : { notes: value.trim() }));
   };
   const ui = harness("components/admin/LeadsProvider.tsx", { writer: wrapped, authValue,
     dashboardReader: { summary: async () => ({ ok: true, summary: summary([...records.values()].filter(row => !row.deletedAt), serverTotal) }) },
@@ -61,7 +175,7 @@ test("unauthorized states cannot invoke any mutation", async () => {
     const state = await store({ authValue: { ...auth, state: { status } } });
     assert.equal(await state.value().updateLeadStatus(lead.id, "Contacted"), false);
     assert.equal(await state.value().addLeadNote(lead.id, "Notes"), false);
-    assert.equal(await state.value().softDeleteLead(lead.id), false);
+    assert.equal(await state.value().deleteLead(lead.id), false);
     assert.equal(state.writes.length, 0);
   }
 });
@@ -72,14 +186,13 @@ test("status success reconciles the server filter and preserves confirmed detail
   assert.equal(state.value().leads.length,0);
   assert.equal(state.value().getLeadState(lead.id).lead.status,"Contacted");
 });
-for (const operation of ["status", "notes", "archive"]) {
+for (const operation of ["status", "notes", "delete"]) {
   test(`${operation} failure preserves confirmed lead and allows retry`, async () => {
     let attempts = 0;
     const state = await store({ writer: { [operation]: () => ++attempts === 1 ? failure(operation)
-      : success(lead, operation === "status" ? { status: "Contacted" } : operation === "notes" ? { notes: `${lead.notes}\n\nChanged notes` }
-        : { deletedAt: "2026-10-09T10:00:00.000Z" }) } });
+      : operation === "delete" ? { ok: true, id: lead.id } : success(lead, operation === "status" ? { status: "Contacted" } : { notes: `${lead.notes}\n\nChanged notes` }) } });
     const call = () => operation === "status" ? state.value().updateLeadStatus(lead.id, "Contacted")
-      : operation === "notes" ? state.value().addLeadNote(lead.id, "Changed notes") : state.value().softDeleteLead(lead.id);
+      : operation === "notes" ? state.value().addLeadNote(lead.id, "Changed notes") : state.value().deleteLead(lead.id);
     assert.equal(await call(), false);
     assert.deepEqual(plain(state.value().leads[0]), plain(lead));
     assert.equal(state.value().getMutationState(lead.id).message, mutationApi.mutationMessages[operation]);
@@ -155,18 +268,17 @@ test("failed append keeps confirmed history and retry appends the draft only onc
   assert.equal(await state.value().addLeadNote(lead.id, "New note."), true);
   assert.equal(state.value().leads[0].notes, `${lead.notes}\n\nNew note.`);
 });
-test("duplicate notes/archives and status-plus-archive writes on the same lead are blocked", async () => {
-  for (const operation of ["notes", "archive", "status"]) {
+test("duplicate notes/deletes and status-plus-delete writes on the same lead are blocked", async () => {
+  for (const operation of ["notes", "delete", "status"]) {
     const pending = deferred();
     const state = await store({ writer: { [operation]: () => pending.promise } });
     const saving = operation === "notes" ? state.value().addLeadNote(lead.id, "Notes")
-      : operation === "status" ? state.value().updateLeadStatus(lead.id, "Contacted") : state.value().softDeleteLead(lead.id);
+      : operation === "status" ? state.value().updateLeadStatus(lead.id, "Contacted") : state.value().deleteLead(lead.id);
     assert.equal(await state.value().addLeadNote(lead.id, "Duplicate"), false);
-    assert.equal(await state.value().softDeleteLead(lead.id), false);
+    assert.equal(await state.value().deleteLead(lead.id), false);
     assert.equal(await state.value().updateLeadStatus(lead.id, "Closed"), false);
     assert.equal(state.writes.length, 1);
-    pending.resolve(success(lead, operation === "notes" ? { notes: "Notes" } : operation === "status" ? { status: "Contacted" }
-      : { deletedAt: "2026-10-09T10:00:00.000Z" })); await saving;
+    pending.resolve(operation === "delete" ? { ok: true, id: lead.id } : success(lead, operation === "notes" ? { notes: "Notes" } : { status: "Contacted" })); await saving;
   }
 });
 test("another lead stays independently operable while the first lead is saving", async () => {
@@ -178,52 +290,52 @@ test("another lead stays independently operable while the first lead is saving",
   assert.equal(state.value().getMutationState(lead.id).pending, true);
   pending.resolve(success(lead, { status: "Contacted" })); await saving;
 });
-test("archive removes active batch/detail, updates statistics/total, and prevents further writes", async () => {
+test("delete removes active batch/detail, updates statistics/total, and prevents further writes", async () => {
   const second = { ...lead, id: "second-row" };
   const state = await store({ leads: [lead, second], total: 137 });
-  assert.equal(await state.value().softDeleteLead(lead.id), true); await tick();
+  assert.equal(await state.value().deleteLead(lead.id), true); await tick();
   assert.equal(state.value().total, 136);
   assert.equal(state.value().leads.length, 1);
   assert.equal(statistics(state.value().leads).New, 1);
   assert.equal(state.value().getLeadState(lead.id).status, "notFound");
-  assert.equal(state.value().notice, "Lead archived from active leads.");
-  assert.equal(await state.value().softDeleteLead(lead.id), false);
+  assert.equal(state.value().notice, "Lead deleted successfully.");
+  assert.equal(await state.value().deleteLead(lead.id), false);
   assert.equal(await state.value().updateLeadStatus(lead.id, "New"), false);
   assert.equal(state.writes.length, 1);
   const list = harness("components/admin/LeadsList.tsx", { leadsValue: state.value() });
-  assert.ok(renderToStaticMarkup(list.render()).includes("Lead archived from active leads."));
+  assert.ok(renderToStaticMarkup(list.render()).includes("Lead deleted successfully."));
 });
-test("archiving detail-only lead refreshes authoritative server total", async () => {
+test("deleting detail-only lead refreshes authoritative server total", async () => {
   const older = { ...lead, id: "older-row" };
   const state = await store({ total: 137, detail: older });
   await state.value().ensureLead(older.id);
-  assert.equal(await state.value().softDeleteLead(older.id), true); await tick();
+  assert.equal(await state.value().deleteLead(older.id), true); await tick();
   assert.equal(state.value().total, 136);
   assert.equal(state.value().leads.length, 1);
   assert.equal(state.value().getLeadState(older.id).status, "notFound");
 });
 test("active total cannot become negative even for an inconsistent stubbed count", async () => {
   const state = await store({ total: 0 });
-  await state.value().softDeleteLead(lead.id);
+  await state.value().deleteLead(lead.id);
   assert.equal(state.value().total, 0);
 });
 
-test("batch refresh is blocked during a pending write so an older list cannot restore an archived lead", async () => {
+test("batch refresh is blocked during a pending write so an older list cannot restore a deleted lead", async () => {
   const pending = deferred(); let reads = 0;
-  const state = await store({ writer: { archive: () => pending.promise }, reader: {
+  const state = await store({ writer: { delete: () => pending.promise }, reader: {
     list: async () => { reads++; return { ok: true, leads: [lead], total: 1 }; }, detail: async () => ({ ok: true, lead: null }),
   } });
-  const deleting = state.value().softDeleteLead(lead.id);
+  const deleting = state.value().deleteLead(lead.id);
   await state.value().refreshLeads(); assert.equal(reads, 1);
-  pending.resolve(success(lead, { deletedAt: "2026-10-09T10:00:00.000Z" })); await deleting; await tick();
+  pending.resolve({ ok: true, id: lead.id }); await deleting; await tick();
   assert.equal(state.value().leads.length, 0);
   assert.equal(state.value().getLeadState(lead.id).status, "notFound");
 });
 test("a pending list read prevents writes until an active lead is confirmed", async () => {
   const pending = deferred(); let writes = 0;
-  const ui = harness("components/admin/LeadsProvider.tsx", { reader: { list: () => pending.promise }, writer: { archive: () => { writes++; } } });
+  const ui = harness("components/admin/LeadsProvider.tsx", { reader: { list: () => pending.promise }, writer: { delete: () => { writes++; } } });
   ui.render(); ui.flush();
-  assert.equal(await ui.render().props.value.softDeleteLead(lead.id), false);
+  assert.equal(await ui.render().props.value.deleteLead(lead.id), false);
   assert.equal(writes, 0);
   pending.resolve({ ok: true, leads: [lead], total: 1 }); await tick();
 });
@@ -356,23 +468,23 @@ test("empty Add Note input cannot submit or call provider", async () => {
   }
   assert.equal(calls, 0);
 });
-test("all mutation controls for the current lead disable while saving notes or archiving", () => {
-  for (const operation of ["notes", "archive"]) {
+test("all mutation controls for the current lead disable while saving notes or deleting", () => {
+  for (const operation of ["notes", "delete"]) {
     const ui = detail({ getMutationState: () => ({ operation, pending: true, message: "", success: false }) });
     for (const type of ["select", "textarea"]) assert.equal(ui.find(ui.render(), node => node.type === type).props.disabled, true);
     assert.equal(ui.find(ui.render(), node => node.type === "button" && node.props.type === "submit").props.disabled, true);
-    assert.match(renderToStaticMarkup(ui.render()), operation === "notes" ? /Saving note/ : /Archiving/);
+    assert.match(renderToStaticMarkup(ui.render()), operation === "notes" ? /Saving note/ : /Deleting/);
   }
 });
-test("archive requires confirmation, describes retained data, and redirects only on confirmed success", async () => {
+test("delete requires confirmation, describes permanence, and redirects only on confirmed success", async () => {
   for (const succeeded of [true, false]) {
     let calls = 0;
-    const ui = detail({ softDeleteLead: async id => { assert.equal(id, lead.id); calls++; return succeeded; } });
+    const ui = detail({ deleteLead: async id => { assert.equal(id, lead.id); calls++; return succeeded; } });
     const tree = ui.render(); const dialog = ui.find(tree, node => node.type === "dialog");
     dialog.ref.current = { showModal() {}, close() {} };
-    const open = ui.find(ui.render(), node => node.type === "button" && !node.props.type && [node.props.children].flat(Infinity).includes("Archive Lead"));
+    const open = ui.find(ui.render(), node => node.type === "button" && !node.props.type && [node.props.children].flat(Infinity).includes("Delete Lead"));
     open.props.onClick(); assert.equal(calls, 0);
-    assert.ok(renderToStaticMarkup(ui.render()).includes("does not permanently delete"));
+    assert.ok(renderToStaticMarkup(ui.render()).includes("This will permanently delete this lead and cannot be undone."));
     const confirmation = ui.find(ui.render(), node => node.type === "dialog");
     const buttons = confirmation.props.children.flat(Infinity).find(node => node?.props?.className === "dialogActions").props.children;
     buttons[1].props.onClick(); await tick();
@@ -380,9 +492,9 @@ test("archive requires confirmation, describes retained data, and redirects only
     assert.deepEqual(Array.from(ui.redirects), succeeded ? ["/admin/leads/"] : []);
   }
 });
-test("archive cancellation does not call a mutation", () => {
+test("delete cancellation does not call a mutation", () => {
   let calls = 0;
-  const ui = detail({ softDeleteLead: async () => { calls++; } });
+  const ui = detail({ deleteLead: async () => { calls++; } });
   const dialog = ui.find(ui.render(), node => node.type === "dialog"); dialog.ref.current = { close() {} };
   const buttons = dialog.props.children.flat(Infinity).find(node => node?.props?.className === "dialogActions").props.children;
   buttons[0].props.onClick(); assert.equal(calls, 0);

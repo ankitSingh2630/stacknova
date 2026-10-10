@@ -1,5 +1,6 @@
 import { Client, ID, TablesDB } from "node-appwrite";
 import { Resend } from "resend";
+import { buildCustomerLogoAttachment } from "./email-assets.js";
 import { buildCustomerConfirmationEmail, buildAdminLeadEmail } from "./email-templates.js";
 
 const limits = { name: 100, email: 254, phone: 32, company: 150, service: 100, message: 4000, source: 100 };
@@ -101,11 +102,11 @@ async function sendLeadEmails({ req, env, data, createEmailClient, log, error })
   let client;
   const operations = [
     { name: "Customer confirmation", keys: ["RESEND_API_KEY", "RESEND_FROM_EMAIL"],
-      build: () => ({ from: env.RESEND_FROM_EMAIL, to: data.email,
-        ...buildCustomerConfirmationEmail(data) }) },
+      build: () => ({ from: `StackNova Technologies <${env.RESEND_FROM_EMAIL}>`, to: data.email,
+        ...buildCustomerConfirmationEmail(data), attachments: [buildCustomerLogoAttachment()] }) },
     { name: "Admin notification", keys: ["RESEND_API_KEY", "RESEND_FROM_EMAIL", "STACKNOVA_LEADS_EMAIL"],
-      build: () => ({ from: env.RESEND_FROM_EMAIL, to: env.STACKNOVA_LEADS_EMAIL,
-        replyTo: data.email, ...buildAdminLeadEmail(data) }) },
+      build: () => ({ from: `StackNova Technologies <${env.RESEND_FROM_EMAIL}>`, to: env.STACKNOVA_LEADS_EMAIL,
+        replyTo: data.email, ...buildAdminLeadEmail(data), attachments: [buildCustomerLogoAttachment()] }) },
   ];
   const outcomes = await Promise.allSettled(operations.map(async (operation) => {
     const missing = operation.keys.filter((key) => typeof env[key] !== "string" || !env[key].trim());

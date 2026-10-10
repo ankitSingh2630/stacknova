@@ -1,178 +1,128 @@
-# Phase 7: real lead management writes
+# Phase 7: lead management writes and permanent deletion
 
-Phase 7 enables authorized StackNova admins to change status, save internal notes, and archive leads. Appwrite persistence must succeed before confirmed provider data or success feedback changes. Lead creation continues through the existing Contact → submit-enquiry Function → TablesDB → Resend flow, which is unchanged.
+Authorized StackNova admins can change status, append private notes, and permanently delete a lead. Every operation is confirmed by Appwrite before cached lead data changes. Public Contact submission, both Functions, Resend, Send Email/CC/BCC, authentication and Phase 8 queries are unchanged by the hard-delete update. Phase 9 is not started.
 
-## Manual Appwrite Console permission step
+## Manual Appwrite permission step
 
-Open **leads → Settings → Permissions → StackNova Admins** and change the table grant from **Read** to **Read + Update**:
+In **Databases → configured database → leads → Security → StackNova Admins**, enable Delete alongside Read and Update:
 
 | Permission | Grant |
 | --- | --- |
 | Read | Yes |
 | Update | Yes |
 | Create | No |
-| Delete | No |
+| Delete | Yes |
 
-Do not grant Any, Guests, Users, or other public access. Do not change Row Security, migrate per-row permissions, or change public Function permissions/scopes. Existing Function-created rows with `permissions: []` continue to use table-level team permissions.
-
-Appwrite Update permission authorizes row updates; it does not restrict updates to particular fields. The application deliberately constructs only the three single-field patches below. These patches constrain application behavior; the Appwrite team grant remains the real data-security boundary. AdminGuard protects the UI, and accepted team membership protects access to the workspace.
+Do not grant Any, Guests, Users, or any public access. Keep Row Security, per-row grants and Function permissions/scopes unchanged. Public lead creation continues through submit-enquiry. Without the manual Delete grant, deletion fails safely and preserves the lead and valid admin session.
 
 ## Provider and SDK architecture
 
-`LeadDetails` calls only these methods from the central `LeadsProvider`:
+LeadDetails calls the central LeadsProvider methods:
 
 - `updateLeadStatus(id, status)`
 - `addLeadNote(id, newNote)`
-- `softDeleteLead(id)`
+- `deleteLead(id)`
 
-`lib/admin/lead-mutations.ts` owns the shared `tablesDB.updateRow()` call. It uses the object-argument signature supported by the installed `appwrite@28.1.0`:
+`lib/admin/lead-mutations.ts` receives the shared authenticated TablesDB instance and configured IDs. Only status and notes use `updateRow()`; permanent deletion uses `deleteRow()` exclusively. No admin `createRow()` call exists. No full Lead, arbitrary patch, permissions, credentials or fabricated timestamp is sent.
+
+The installed appwrite@28.1.0 object signature is:
 
 ```ts
-await tablesDB.updateRow({
+deleteRow(params: {
+  databaseId: string;
+  tableId: string;
+  rowId: string;
+  transactionId?: string;
+}): Promise<{}>;
+```
+
+The deletion call is:
+
+```ts
+await tablesDB.deleteRow({
   databaseId: appwriteConfig.databaseId,
   tableId: appwriteConfig.leadsTableId,
   rowId: id,
-  data,
 });
 ```
 
-The helper receives the shared client and configured IDs from the provider. It never sends the full Lead object, permissions, metadata, unrelated fields, or credentials. Admin runtime has no `createRow()` or `deleteRow()` calls.
+The helper validates ID/configuration, awaits SDK completion and returns `{ ok: true, id }`. It does not fabricate a returned lead. Status/notes success still maps the returned row, verifies ID and requested field, and uses real Appwrite timestamps.
 
-Every successful SDK response passes through the existing `mapLeadRow()`. The helper verifies that the returned ID matches the requested ID and that the requested field is confirmed. Appwrite's `$updatedAt` becomes `updatedAt`; no update timestamp is fabricated. A malformed, mismatched, or unconfirmed response produces safe failure feedback without changing confirmed caches. If a response cannot be confirmed after a request, refresh to inspect the database before trying again.
+Per-lead locks block duplicate or overlapping status/notes/delete requests. Other leads remain independently operable. Request counters, detail versions and identity/lifecycle checks prevent stale results after deletion, logout, identity change, provider unmount or auth cache clearing. Detail navigation/unmount also prevents a stale deletion completion from redirecting another page.
 
-The provider returns `true` only after confirming the mutation and applying its returned row. Operation-specific pending, success, and failure state is held per lead. A lock immediately blocks duplicate or overlapping writes for the same lead, including status/notes/archive combinations. Other leads can be saved independently.
+## Status updates
 
-Batch refresh is disabled while any write is pending. Writes are blocked while a batch read is loading. A detail must be loaded before it can be edited, and cached details are not fetched again during a mutation. This prevents older list/detail reads from overwriting confirmed writes. Existing request-generation and identity checks also invalidate responses after unmount, logout, authorization loss, identity change, or a failed read that clears private caches.
+Only canonical statuses are accepted: New, Contacted, In Progress, Converted and Closed. The only update payload is `{ status: validatedStatus }`. After confirmed persistence, returned lead data updates the detail/list/recent caches; the current server list and requested dashboard reconcile authoritative totals. Failure preserves the confirmed status.
 
-## Status update
+## Append-only notes
 
-The selector saves on selection and shows a saving indicator. All mutation controls for that lead are disabled until the request settles. Validation happens before network access against these canonical values:
-
-```text
-New
-Contacted
-In Progress
-Converted
-Closed
-```
-
-The only payload is:
-
-```ts
-{ status: validatedStatus }
-```
-
-Invalid input causes zero SDK calls and shows `Please select a valid lead status.`. After confirmation, the returned mapped row replaces the cached lead. Dashboard counts and client-side filtered lists immediately derive from that confirmed state. A failed request preserves the previously confirmed status.
-
-## Add a note / simple note history
-
-Notes remain one optional Text column on `leads`. Persisted notes are displayed above an initially empty **Add a note** textarea and **Save Note** button. The input contains only the new note; it never preloads historic text. The provider constructs the append value from its currently confirmed cached lead, under the existing per-lead lock:
+Notes remain one optional Text column. Existing history appears above an initially empty Add a note textarea. The provider trims the new draft, rejects whitespace-only input, and appends it to confirmed history using two newlines:
 
 ```ts
 const newNote = draft.trim();
-// Reject an empty newNote locally, with no network request.
 const existingNotes = confirmedLead.notes.trim();
 const nextNotes = existingNotes ? `${existingNotes}\n\n${newNote}` : newNote;
-
 // The only updateRow data:
 { notes: nextNotes }
 ```
 
-The first note saves normally; successive notes preserve previous text and use exactly two newlines between entries. Outer whitespace is trimmed and internal multiline content is preserved. No optimistic append occurs. The returned row is mapped and confirmed before provider history changes, and the textarea clears only when the provider reports success. Failed saves keep both persisted history and the typed draft unchanged, with safe failure feedback and retry controls.
+Internal line breaks remain. Only confirmed success updates history and clears the draft. Failure preserves both. There are no separate note records, note metadata or individual history-edit controls. Notes remain escaped text.
 
-Empty/whitespace drafts cannot submit and cannot clear notes. This UI provides a simple append-only text history, with no editing/deleting individual historic notes. There are no note IDs, authors, timestamps, arrays, JSON/schema changes, or separate `lead_notes` table. Notes are rendered as text, not HTML.
+Appwrite receives replacement Text rather than an atomic append. Locks prevent overlaps within this provider, not across admins/tabs; refresh confirmed history when needed. This existing behavior is unchanged.
 
-**Concurrency limitation:** Appwrite receives one replacement Text value, not an atomic append. Two admins saving from the same or stale cached history can theoretically overwrite one another's additions. Per-lead locking prevents duplicates/overlaps within this provider instance, not across admins or tabs. This simple approach is accepted for the assessment; no new table or concurrency protocol is introduced. Refresh to obtain the latest history before adding a note when needed.
+## Permanent deletion and confirmation
 
-## Archive / soft delete
+The destructive **Delete Lead** button opens the existing modal. Its warning is:
 
-The confirmation dialog explains that archiving removes the lead from active leads while retaining the stored row. Only confirmation starts the write. The sole payload is:
+> This will permanently delete this lead and cannot be undone.
 
-```ts
-{ deletedAt: new Date().toISOString() }
-```
+Cancel is initially focused. Cancel/Escape close without a request and restore focus. Confirmation is explicit; pending controls are disabled and show **Deleting…**. Escape cannot dismiss the dialog while deletion is pending. There is no trash, recycle bin, restore or backup table.
 
-**Soft delete = update `deletedAt`. It is not permanent deletion.** No hard-delete API or Delete permission is used.
+Only after deleteRow confirms success does the provider remove the lead from list/detail/recent caches. A detail-unavailable marker protects against stale reads. It invalidates pending list/dashboard responses and refreshes the current server query and any requested dashboard. Server totals determine counts and page correction; no guessed subtraction occurs. If the list was not requested yet, the destination page loads it normally.
 
-After the returned row is mapped and confirms a populated `deletedAt`, the provider removes it from the active batch and marks its detail unavailable. Dashboard counts, list filters, and pagination derive from the remaining batch. Further mutation attempts for that cached archived lead are blocked. The detail page redirects to `/admin/leads/` after confirmed success. A transient success message lives in provider memory; no localStorage/sessionStorage is used.
+Confirmed success redirects to `/admin/leads/` and displays **Lead deleted successfully.** The notice is transient provider memory. A following list/dashboard refresh failure is a separate read failure: deletion remains successful and the deleted row is not restored.
 
-The provider decrements the active total only if the row was in the current active list batch, with a floor of zero. Archiving a detail-only row fetched independently leaves the list total unchanged until an explicit refresh retrieves the latest server total. No additional count queries or automatic batch refill are added. If the batch becomes empty while the total remains positive, the dashboard prompts a refresh rather than implying that the database has no leads.
-
-The Phase 6 list query remains exactly:
-
-```ts
-[
-  Query.orderDesc("$createdAt"),
-  Query.limit(100),
-  Query.isNull("deletedAt"),
-]
-```
-
-Direct detail refresh still uses `getRow()` for IDs outside the batch and excludes rows with a populated `deletedAt`. `/admin/lead/?id=<row-id>` is preserved.
-
-## Safe failures and authorization
+## Safe errors
 
 | Failure | Behavior |
 | --- | --- |
-| 401 | Clear private list/detail data, invalidate pending responses, and request one controlled central auth recheck. No automatic write/read retry loop. |
-| 403 | Keep the authenticated admin session and confirmed data. Show operation-specific safe feedback; do not log out or recheck repeatedly. Verify the manual team Update grant. |
-| 404 | Remove the stale lead from active caches and show an unavailable detail. Prevent further edits. Apply the same batch-only total adjustment. |
-| Network / 5xx | Preserve confirmed data and notes draft, restore controls, and allow a deliberate retry. |
-| Invalid/mismatched returned row | Preserve confirmed data and show safe feedback. No success is fabricated. |
+| 401 | Clear private caches, invalidate pending results, and request the existing controlled central auth recheck. No retry loop. |
+| 403 | Preserve the valid session and confirmed lead. Show safe failure; verify team Delete permission. |
+| 404 | Treat the row as already unavailable. Remove stale list/detail/recent data and reconcile requested list/dashboard totals. Return false and do not show deleted-success feedback. |
+| Network / 5xx | Preserve confirmed lead data; restore controls and allow manual retry. |
+| Invalid status/notes returned row | Preserve confirmed data and show safe failure; no fabricated success. |
 
-Safe operation messages are:
+Deletion errors say **Unable to delete this lead right now.** Missing rows say **This lead is no longer available.** Raw Appwrite errors are hidden. Status/notes retain their existing safe messages. No private data is stored in localStorage/sessionStorage.
 
-- `Unable to update lead status right now.`
-- `Unable to save notes right now.`
-- `Unable to remove this lead right now.`
-- For unavailable leads: `This lead is no longer available.`
+## Legacy deletedAt compatibility and manual migration
 
-Raw Appwrite errors, provider responses, credentials, and environment values are never displayed. No secrets or auth state are persisted in browser storage.
+New deletions perform no deletedAt write. Keep the column, index, Lead field, mapper support, `Query.isNull("deletedAt")` list/dashboard filters, detail protection and Send Email Function guard temporarily. They prevent previously soft-deleted rows from reappearing. Null/unset active rows remain supported.
 
-## Static export and Phase 8 boundary
+No historical row is automatically restored, cleared or migrated. Manually inspect populated deletedAt values in the correct database/table, identify intended historical deletions and permanently delete only rows you select. Do not clear deletion markers, which would reactivate archived leads. Verify remaining populated markers and active totals before considering cleanup.
 
-The existing Next.js App Router `output: "export"` architecture remains. Writes run in client components through the authenticated Appwrite Web SDK. No middleware, SSR, API routes, route handlers, server actions, or dynamic ID routes are introduced.
+After historical rows are handled, removing all filters/types/consumer guards and then the schema/index is a separate approved task. Do not drop the column while code still queries it. Permanently deleted rows naturally return getRow 404 and cannot be emailed; email code itself is unchanged.
 
-Phase 6 latest-100 reads and client-side search, status/service/date filters, mobile cards, and pagination remain. Dashboard figures describe the loaded batch when the returned total exceeds it. Phase 8 server-side querying, cursor pagination, advanced queries, new indexes, bulk actions, and hard delete are not implemented.
+## Queries, static export and deployment
 
-## Automated verification
+Current Phase 8 server search/status/service/date queries, debounce, five-row pagination, ordering and race protection remain. Deleting the final item on an invalid page uses existing authoritative nearest-page correction. Dashboard Recent Leads stays five, all five status totals remain, and Open Pipeline stays removed.
 
-Tests stub TablesDB and auth. They do not contact live Appwrite. Phase 7 tests cover narrow patches, status validation, successive note appends, two-newline separators, multiline preservation, rejected empty notes, separate history/input, clearing the draft only after success, mapped returned rows/IDs/timestamps, confirmed-only updates, failures, per-lead locks, independent leads, cache removal/totals, read/write races, auth invalidation, UI saving/confirmation/redirect behavior, and zero admin create/hard-delete calls.
+Static export is unchanged: authenticated browser SDK calls require no Next.js server, route handlers, middleware, server actions or dynamic ID routes. Rebuild/redeploy only the frontend. Neither submit-enquiry nor send-lead-email requires modification or redeployment. No new environment variables, Function scopes or schema changes are needed.
 
-Run the root regression suites:
+## Automated and live verification
 
-```powershell
-node --test tests/admin-lead-mutations.test.cjs tests/admin-lead-mutations-ui.test.cjs tests/admin-leads.test.cjs tests/admin-leads-ui.test.cjs tests/admin-auth.test.cjs tests/admin-auth-ui.test.cjs tests/enquiry.test.cjs tests/contact.test.cjs
-```
+Run `node --test tests/*.test.cjs` at the root, `npm.cmd test` in each Function directory, and `npm.cmd run build` at the root. Tests mock Appwrite/Resend and never delete real leads or send email.
 
-From `functions/submit-enquiry/`, run `npm.cmd test`. From the repository root, run `npm.cmd run build` to verify lint, types, and static export. Automated success does not prove live mutation permission or persistence.
+Live verification remains pending:
 
-Verification after the notes UX correction on 2026-10-09: **188 tests passed** (54 Phase 7, 43 Phase 6 reads/UI, 40 admin auth, 9 Contact/enquiry, and 42 Function/Resend). `npm.cmd run build` passed compilation, lint, type checks, and all eight static pages. No live Appwrite requests were made during this correction.
+1. Enable the team Delete grant and rebuild/redeploy the frontend.
+2. Open a specifically identified disposable test lead. Check permanent warning and cancel without deletion.
+3. Confirm deletion once; verify pending state, redirect and deleted-success notice.
+4. Confirm the actual row no longer exists in Appwrite and its direct URL is unavailable.
+5. Verify loaded dashboard totals/recent rows and current list total reconcile; test final-page correction.
+6. Temporarily remove only Delete permission, retain Read/Update, and verify safe failure without logout or cache removal. Restore Delete.
+7. Verify status and successive notes still persist through updateRow, and Send Email/CC/BCC still work on an existing lead.
+8. Verify historical populated deletedAt rows remain hidden; inspect/migrate them manually only as intended.
 
-## Manual live verification checklist
+No Console permissions, historical data or live deletion were changed by automated verification.
 
-Live Phase 7 verification is pending until you grant the table team Update permission and perform these checks:
-
-1. Log in as an authorized StackNova admin.
-2. Open a real lead.
-3. Change status from New to Contacted.
-4. Refresh the detail page.
-5. Verify Contacted persisted.
-6. Verify the dashboard and list reflect the status change.
-7. Add an internal note with multiline text.
-8. Refresh the detail page.
-9. Verify the history persisted and the Add a note textarea is empty.
-10. Add another note, then refresh.
-11. Verify both notes remain separated by two newlines; blank/whitespace input cannot save or clear history.
-12. Archive a test lead through the confirmation dialog.
-13. Verify it disappears from the active list.
-14. Verify loaded-batch dashboard counts change.
-15. Verify its direct detail URL no longer displays an active lead.
-16. Check that its Appwrite row still exists.
-17. Verify `deletedAt` contains an ISO timestamp.
-18. Verify no hard deletion occurred.
-19. Temporarily remove only the team's Update grant, keeping Read.
-20. Verify writes fail safely without logout or changes to confirmed data; notes drafts remain visible.
-21. Restore the team's Update grant.
-
-The public Contact/Function/Resend pipeline and its permissions require no Phase 7 changes.
+Local verification on 2026-10-10: **475 tests passed** (313 root frontend/admin tests, 114 send-lead-email tests, and 48 submit-enquiry/Resend tests). The final `npm.cmd run build` passed compilation, lint, type checks and all eight static pages; `git diff --check` passed. One existing CC/BCC presentation assertion was aligned with the current panel's omitted placeholders; email code was not changed. Live permission/deletion verification remains pending.
