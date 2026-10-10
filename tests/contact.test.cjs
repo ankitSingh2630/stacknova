@@ -50,6 +50,7 @@ test("fast repeated submits create one request; pending controls disable; succes
   await ui.submit();
   assert.equal(requests, 1);
   assert.equal(received.message, "Build a website.\n\nBudget: Not sure yet");
+  assert.deepEqual(Object.keys(received).sort(), ["company", "email", "message", "name", "phone", "service"]);
   assert.equal(ui.getForm().props["aria-busy"], true);
   assert.equal(ui.find(ui.render(), (node) => node.type === "button").props.disabled, true);
   assert.equal(ui.find(ui.render(), (node) => node.type === "button").props.children, "Submitting…");
@@ -86,4 +87,25 @@ test("budget alone cannot satisfy message validation and combined overflow never
   await ui.submit();
   assert.equal(requests, 0);
   assert.equal(ui.form.values.message.length, 4000);
+});
+
+test("Contact checks raw controls before normalizing and retains input after rejection", async () => {
+  let requests = 0;
+  const ui = harness(async () => { requests++; return { success: true, message: "Saved" }; });
+  for (const [field, value] of [["email", "test@example.com\r\n"], ["name", "\u2028Test"], ["company", "Company\u0085"], ["message", "\u000bProject"]]) {
+    ui.form.values = { ...validValues, [field]: value };
+    await ui.submit();
+    assert.equal(requests, 0);
+    assert.equal(ui.form.values[field], value);
+    assert.equal(ui.form.resets, 0);
+  }
+});
+
+test("all Contact input limits remain aligned with the Function contract", () => {
+  const ui = harness(async () => {});
+  for (const [name, maxLength] of Object.entries({ name: 100, email: 254, phone: 32, company: 150, message: 4000 })) {
+    const input = ui.find(ui.render(), node => node.props?.name === name);
+    assert.equal(input.props.maxLength, maxLength);
+    assert.equal(Boolean(input.props.required), name !== "company");
+  }
 });

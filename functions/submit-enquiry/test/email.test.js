@@ -16,7 +16,7 @@ const env = {
 const payload = {
   name: " Rahul Sharma ", email: " rahul@example.com ", phone: " +91 9876543210 ",
   company: " Example Company ", service: " Web Development ",
-  message: " First line\nSecond line ", source: " untrusted source ",
+  message: " First line\nSecond line ",
 };
 const success = { success: true, message: "Thank you! Your enquiry has been submitted successfully." };
 
@@ -213,7 +213,7 @@ test("unexpected provider success shape is treated as email failure, preserving 
   assert.equal(result.errors.length, 2);
 });
 
-test("Resend and runtime credentials are redacted from whitelisted logs; raw responses and stacks are excluded", async () => {
+test("Resend diagnostics omit credentials, arbitrary provider text, raw responses and stacks", async () => {
   const failure = {
     name: `Provider-${env.RESEND_API_KEY}`, message: `Failure ${env.RESEND_API_KEY} fake-execution-key`,
     code: env.RESEND_API_KEY, statusCode: 401,
@@ -225,7 +225,7 @@ test("Resend and runtime credentials are redacted from whitelisted logs; raw res
   const observable = JSON.stringify({ body: result.body, logs: result.logs, errors: result.errors });
   for (const forbidden of [env.RESEND_API_KEY, "fake-execution-key", "raw-response-marker", "private-stack-marker"])
     assert.ok(!observable.includes(forbidden));
-  assert.match(observable, /REDACTED/);
+  assert.doesNotMatch(observable, /Failure|Provider-|REDACTED/);
   assert.match(observable, /statusCode/);
 });
 
@@ -267,7 +267,7 @@ test("both templates escape every user-controlled HTML field and preserve multil
 });
 
 test("submitted internal fields including notes are rejected without email initialization", async () => {
-  for (const field of ["status", "notes", "deletedAt", "$id", "$createdAt", "$updatedAt"]) {
+  for (const field of ["source", "budget", "cc", "bcc", "from", "replyTo", "headers", "extra", "status", "notes", "deletedAt", "$id", "$createdAt", "$updatedAt"]) {
     const result = await invoke({ body: { ...payload, [field]: "private" } });
     assert.equal(result.status, 400);
     assert.equal(result.writes.length, 0);
@@ -365,6 +365,74 @@ test("Function runtime has no dependency on design-reference folders or screensh
     const source = readFileSync(new URL(filename, directory), "utf8");
     assert.doesNotMatch(source, /(?:admin|docs)\/email-template|screen\.png|brand\/t_logo-master/);
   }
+});
+
+for (const key of ["RESEND_FROM_EMAIL", "STACKNOVA_LEADS_EMAIL"]) {
+  test(`${key} rejects invalid configured addresses without exposing values or losing the lead`, async () => {
+    for (const value of ["<config@example.com>", "Person <config@example.com>", "config@example.com\r\n", "config@example.com\n",
+      "config@example.com,other@example.com", "config@example.com;other.example.com", "config\u0085@example.com",
+      "config@example.com\u2028", "bad-address", "c".repeat(65) + "@example.com"]) {
+      const result = await invoke({ config: { ...env, [key]: value } });
+      assertSavedSuccess(result);
+      const adminOnly = key === "STACKNOVA_LEADS_EMAIL";
+      assert.equal(result.emails.length, adminOnly ? 1 : 0);
+      assert.equal(result.initialized, adminOnly ? 1 : 0);
+      assert.equal(result.errors.length, adminOnly ? 1 : 2);
+      for (const error of result.errors) assert.match(error, new RegExp(`Invalid configuration: ${key}`));
+      const observable = JSON.stringify({ body: result.body, logs: result.logs, errors: result.errors });
+      assert.ok(!observable.includes(value));
+      for (const configured of Object.values(env)) assert.ok(!observable.includes(configured));
+    }
+  });
+}
+
+test("HTML-like text stays intact in storage/plaintext and escaped in email HTML", async () => {
+  const text = '<website> Tom & Jerry "quoted text" it\'s fine\r\n<script>alert("x")</script>\tनमस्ते';
+  const result = await invoke({ body: { ...payload, name: 'Tom & "Jerry"', company: "<company>", message: text } });
+  assertSavedSuccess(result);
+  assert.equal(result.writes[0].message, text);
+  assert.equal(result.writes[0].company, "<company>");
+  assert.ok(result.emails[1].text.includes(text));
+  assert.match(result.emails[1].html, /&lt;website&gt; Tom &amp; Jerry &quot;quoted text&quot; it&#39;s fine<br>&lt;script&gt;/);
+  assert.doesNotMatch(result.emails[1].html, /<website>|<script>/);
+  for (const email of result.emails) {
+    assert.equal(Object.hasOwn(email, "cc"), false);
+    assert.equal(Object.hasOwn(email, "bcc"), false);
+    assert.equal(Object.hasOwn(email, "headers"), false);
+  }
+});
+
+test("thrown and returned provider failures omit customer and provider data from responses/logs", async () => {
+  const privateValues = [payload.email.trim(), payload.phone.trim(), payload.message.trim(), ...Object.values(env), "provider-payload", "private-stack"];
+  const failure = Object.assign(new Error(privateValues.join(" ")), {
+    name: privateValues.join(" "), type: privateValues.join(" "), statusCode: 422,
+    code: "customer@example.com", response: { privateValues }, stack: "private-stack",
+  });
+  for (const mode of ["thrown", "returned"]) {
+    const result = await invoke(mode === "thrown"
+      ? { emailErrors: { customer: failure, admin: failure } }
+      : { returnedErrors: { customer: failure, admin: failure } });
+    assertSavedSuccess(result);
+    assert.equal(result.emails.length, 2);
+    const observable = JSON.stringify({ body: result.body, logs: result.logs, errors: result.errors });
+    for (const value of privateValues) assert.ok(!observable.includes(value));
+    for (const error of result.errors) assert.match(error, /"category":"operation_failed","statusCode":422/);
+  }
+});
+
+test("logging failures cannot change successful storage or independent email outcomes", async () => {
+  let writes = 0, sends = 0;
+  const handler = createHandler({ env, writeLead: async () => { writes++; }, createEmailClient: () => ({
+    emails: { send: async () => { sends++; throw new Error("private provider detail"); } },
+  }) });
+  const result = await handler({ req: { method: "POST", bodyText: JSON.stringify(payload), headers: {
+    origin: "http://localhost:3000", "content-type": "application/json", "x-appwrite-key": "synthetic-key",
+  } }, res: { json: (body, status) => ({ body, status }) },
+  log: () => { throw new Error("logger failure"); }, error: () => { throw new Error("logger failure"); } });
+  assert.equal(writes, 1);
+  assert.equal(sends, 2);
+  assert.equal(result.status, 201);
+  assert.deepEqual(result.body, success);
 });
 
 test("both enquiry templates place the larger CID logo inside the light main card", () => {

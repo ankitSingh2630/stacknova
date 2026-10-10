@@ -1,5 +1,7 @@
 # Phase 3: public enquiry submission
 
+> Current Phase 9 contract: only name/email/phone/company/service/message are public fields; source is server-owned and rejected in requests. Admin integration and enquiry emails are now implemented. See [Phase 9 security hardening](phase-9-security-hardening.md) for current validation, logging, deployment order, permissions and intentional anti-abuse limitations. Historical verification sections below describe their original phases.
+
 The static Contact form sends a JSON POST to the `submit-enquiry` Appwrite Function. The Function validates the input and creates one private `leads` row using the server SDK and execution-provided credential. Admin screens still use mocks. This phase contains no email delivery, login, real admin data operations, Next.js API routes, server actions, or SSR.
 
 ## Appwrite Console setup
@@ -39,7 +41,7 @@ The existing columns must accommodate the following constraints (limits use Java
 | `company` | 150, optional, stored as an empty string if omitted |
 | `service` | 100; one of the website's six existing Project Type choices |
 | `message` | 4,000, including an optional appended Budget line |
-| `source` | Server assigns `StackNova Website`; supplied optional source is validated but not trusted |
+| `source` | Server assigns `StackNova Website`; client-supplied source is rejected |
 | `status` | Server assigns enum value `New` |
 | `notes` | Optional Text for internal admin notes; no index required; omitted during public lead creation |
 | `deletedAt` | Optional; omitted during public lead creation |
@@ -67,7 +69,7 @@ Deploy the chosen branch and activate the deployment. Do not upload `node_module
 From the repository root in PowerShell, package only the required Function source and dependency files:
 
 ```powershell
-tar.exe -czf "$env:TEMP/stacknova-submit-enquiry.tar.gz" -C functions/submit-enquiry package.json package-lock.json src
+tar.exe -czf "$env:TEMP/stacknova-submit-enquiry.tar.gz" -C functions/submit-enquiry package.json package-lock.json src assets
 ```
 
 In Appwrite, open `submit-enquiry` > Deployments > Create deployment, upload the archive, set entrypoint `src/main.js` and build command `npm ci --omit=dev --ignore-scripts`, then deploy and activate it. Ensure the three Function variables, execute access, and scopes are configured.
@@ -95,12 +97,11 @@ The local `.env.local` contains an empty `NEXT_PUBLIC_ENQUIRY_FUNCTION_URL` plac
   "phone": "+91 9876543210",
   "company": "ABC Technologies",
   "service": "Web Development",
-  "message": "I need a website for my business.",
-  "source": "StackNova Website"
+  "message": "I need a website for my business."
 }
 ```
 
-Company and source may be omitted. Required fields are trimmed and validated independently on both sides. Budget remains optional in the form and is appended to `message`; there is no new budget column. A blank project message remains invalid even with a budget. The textarea reserves space for the selected Budget suffix, and final combined-message validation still enforces 4,000 characters on both sides. Selecting a budget after typing a long message shows a field error without deleting text; shorten the message or remove the optional budget. The Function rejects unknown fields, including `status`, `deletedAt`, timestamps, IDs, database/table IDs, and permissions. It rejects malformed JSON, non-string fields, invalid control characters, oversized strings, unsupported services, and bodies larger than 32 KiB.
+Company may be omitted or be an empty string; null is rejected. Controls are checked before trim, and required fields are independently validated on both sides. Budget remains optional in the form and is appended to `message`; there is no new budget column or separate request property. A blank project message remains invalid even with a budget. The textarea reserves space for the selected Budget suffix, and final combined-message validation still enforces 4,000 characters on both sides. Selecting a budget after typing a long message shows a field error without deleting text; shorten the message or remove the optional budget. The Function rejects unknown fields, including `source`, `status`, `deletedAt`, timestamps, IDs, database/table IDs, and permissions. It rejects malformed JSON, non-string fields, invalid raw control characters, oversized strings, unsupported services, and bodies larger than 32 KiB. Email requires one practical bare mailbox; see Phase 9 for exact control/format rules.
 
 Success, after the write completes:
 
@@ -111,7 +112,7 @@ Success, after the write completes:
 Validation example:
 
 ```json
-{"success":false,"message":"Please enter a valid email address."}
+{"success":false,"message":"Invalid enquiry details."}
 ```
 
 Server failure:
@@ -120,7 +121,7 @@ Server failure:
 {"success":false,"message":"Unable to submit your enquiry right now."}
 ```
 
-HTTP statuses: 201 saved; 400 invalid body; 403 rejected origin/preflight; 405 unsupported method; 413 oversized body; 415 unsupported content type; 500 backend/configuration failure. Responses contain no IDs, configuration, keys, raw exceptions, or stack traces. Backend logging uses only a fixed generic failure message. The browser displays recognized contract messages and a generic fallback for unexpected/infrastructure responses. `submitEnquiry()` catches request setup, configuration, serialization, fetch, timeout, and JSON parsing errors and always resolves to a safe `EnquiryResponse`; Contact does not duplicate this catch. Editing revalidates the corresponding stale field error and clears old failure feedback. Success feedback persists until the next submission; only success resets the fields and errors.
+HTTP statuses: 201 saved; 400 invalid body; 403 rejected origin/preflight; 405 unsupported method; 413 oversized body; 415 unsupported content type; 500 backend/configuration failure. Responses contain no IDs, configuration, keys, raw exceptions, or stack traces. Backend logging uses fixed operation/failure descriptions, known configuration names and safe numeric HTTP codes only; arbitrary provider/customer text is omitted. The browser displays recognized contract messages and a generic fallback for unexpected/infrastructure responses. `submitEnquiry()` catches request setup, configuration, serialization, fetch, timeout, and JSON parsing errors and always resolves to a safe `EnquiryResponse`; Contact does not duplicate this catch. Editing revalidates the corresponding stale field error and clears old failure feedback. Success feedback persists until the next submission; only success resets the fields and errors.
 
 ## Origins and duplicate requests
 

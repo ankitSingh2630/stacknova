@@ -9,13 +9,13 @@ const budgetSuffix = (budget: string) => budget ? `\n\nBudget: ${budget}` : "";
 
 function readEnquiry(form: HTMLFormElement): EnquiryPayload {
   const data = new FormData(form);
-  const get = (field: string) => String(data.get(field) || "").trim();
+  const get = (field: string) => String(data.get(field) || "");
   const message = get("message");
   return {
     name: get("name"), email: get("email"), phone: get("phone"),
-    company: get("company"), service: get("service"), source: "StackNova Website",
+    company: get("company"), service: get("service"),
     // Budget never satisfies the independently required project message.
-    message: message ? message + budgetSuffix(get("budget")) : "",
+    message: message.trim() ? message + budgetSuffix(get("budget")) : "",
   };
 }
 

@@ -7,36 +7,50 @@ export const enquiryServices = [
 
 export const enquiryLimits = {
   name: 100, email: 254, phone: 32, company: 150,
-  service: 100, message: 4000, source: 100,
+  service: 100, message: 4000,
 } as const;
 
 export type EnquiryPayload = {
-  name: string; email: string; phone: string; company: string;
-  service: string; message: string; source: string;
+  name: string; email: string; phone: string; company?: string;
+  service: string; message: string;
 };
 export type EnquiryResponse = { success: boolean; message: string };
 export type EnquiryErrors = Partial<Record<keyof EnquiryPayload, string>>;
 const failureMessage = "Unable to submit your enquiry right now. Please try again later.";
+const singleLineControls = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
+const messageControls = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/;
+
+// Keep this small UX check aligned with the independently deployed Function.
+function validEmail(value: string) {
+  return value.length <= enquiryLimits.email && !singleLineControls.test(value) &&
+    /^[A-Za-z0-9.!#$%&'*+\-/=?^_`{|}~]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(value) &&
+    value.indexOf("@") <= 64 && !value.startsWith(".") && !value.includes("..") && !value.includes(".@") &&
+    value.split("@")[1].split(".").every(label => label.length <= 63);
+}
 
 export function validateEnquiry(payload: EnquiryPayload): EnquiryErrors {
   const errors: EnquiryErrors = {};
-  const labels = { name: "Name", email: "Email", phone: "Phone", company: "Company", service: "Project type", message: "Message", source: "Source" };
+  const labels = { name: "Name", email: "Email", phone: "Phone", company: "Company", service: "Project type", message: "Message" };
   for (const field of Object.keys(enquiryLimits) as (keyof EnquiryPayload)[]) {
-    const value = payload[field].trim();
-    if (field !== "company" && field !== "source" && !value) {
+    const input = payload[field];
+    if (field === "company" && input === undefined) continue;
+    if (typeof input !== "string") {
+      errors[field] = `Please enter ${labels[field].toLowerCase()}.`;
+      continue;
+    }
+    const value = input.trim();
+    if ((field === "message" ? messageControls : singleLineControls).test(input)) {
+      errors[field] = `${labels[field]} contains invalid characters.`;
+    } else if (field !== "company" && !value) {
       errors[field] = `Please enter ${labels[field].toLowerCase()}.`;
     } else if (value.length > enquiryLimits[field]) {
       errors[field] = `${labels[field]} must be ${enquiryLimits[field]} characters or fewer${field === "message" ? ", including the selected budget" : ""}.`;
     }
-    if (!errors[field] && (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value) ||
-        (field !== "message" && /[\r\n\t]/.test(value)))) {
-      errors[field] = `${labels[field]} contains invalid characters.`;
-    }
   }
-  const email = payload.email.trim();
-  const phone = payload.phone.trim();
-  const selectedService = payload.service.trim();
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  const email = typeof payload.email === "string" ? payload.email.trim() : "";
+  const phone = typeof payload.phone === "string" ? payload.phone.trim() : "";
+  const selectedService = typeof payload.service === "string" ? payload.service.trim() : "";
+  if (email && !validEmail(email)) {
     errors.email = "Please enter a valid email address.";
   }
   const digits = phone.replace(/\D/g, "").length;
@@ -51,6 +65,7 @@ export function validateEnquiry(payload: EnquiryPayload): EnquiryErrors {
 
 // Only display recognized messages; infrastructure errors must never reach the UI.
 const safeValidationMessages = new Set([
+  "Invalid enquiry details.",
   "Please enter name.", "Please enter email.", "Please enter phone.",
   "Please enter service.", "Please enter message.",
   "Please enter a valid email address.",

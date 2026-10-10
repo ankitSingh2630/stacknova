@@ -2,6 +2,14 @@
 
 > Hard-delete update: Current admin permission requirements supersede the historical foundation below: on leads ? Security grant StackNova Admins Read, Update and Delete; keep Create disabled and grant no Any/Guests/Users access. deleteLead uses deleteRow and never writes deletedAt. Keep the deletedAt column/index and query guards temporarily for historical rows. Manually inspect populated markers and decide which rows to permanently delete; do not clear markers or drop schema. Public creation and both Functions are unchanged. Rebuild/redeploy only the frontend. See [lead management](phase-7-lead-management.md).
 
+## Current Phase 9 security configuration
+
+See [Phase 9 security hardening](phase-9-security-hardening.md) for the current request contract, validation/limits, safe errors/logging, CORS, rollout and intentionally excluded anti-abuse infrastructure. The older Phase 2/3 descriptions below are historical. Admin authentication, real queries, status/notes updates, hard delete and direct email/CC/BCC are now implemented.
+
+Keep public submit-enquiry Execute access Any, scope rows.write, and Function-owned database/table targets. StackNova Admins table permissions are Read/Update/Delete with Create disabled; no public grants. Leave Row Security and row permissions unchanged. Empty row permissions do not remove table-level access. Authenticated send-lead-email remains team-only Execute with rows.read. Phase 9 adds no schema, indexes, scopes or permission changes; live Console settings and column capacities still require read-only verification.
+
+Frontend configuration consists of the seven NEXT_PUBLIC_* identifiers in `.env.example`, including `NEXT_PUBLIC_APPWRITE_SEND_LEAD_EMAIL_FUNCTION_ID`. Privileged runtime credentials and RESEND_API_KEY belong only inside Functions. Root ignore rules protect real `.env`/`.env.*` files while retaining all `.env.example` files. Exact ALLOWED_ORIGINS and preflight are preserved; CORS is not authentication and direct clients can supply an approved Origin. Do not introduce wildcard CORS or public table write access.
+
 ## Phase 3 update
 
 Public enquiries now use the `submit-enquiry` Appwrite Function. See [Phase 3 setup and deployment](phase-3-enquiry.md) for the complete instructions. `Contact.tsx` invokes its public HTTPS URL with `fetch`; it never imports the browser SDK or writes directly to TablesDB. The exported SDK services remain preparation for later phases, and admin screens still use mock data.

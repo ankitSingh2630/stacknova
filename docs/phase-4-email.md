@@ -1,5 +1,7 @@
 # Phase 4: enquiry emails with Resend
 
+> Current security behavior is documented in [Phase 9 security hardening](phase-9-security-hardening.md). Source is now server-owned only, raw controls and practical mailbox syntax are enforced, configured sender/admin addresses are validated, and logs omit arbitrary provider text. Templates and authenticated admin Send Email/CC/BCC are unchanged. Historical phase summaries below retain their original verification context.
+
 The existing static Contact form continues to POST to the `submit-enquiry` Appwrite Function. Phase 4 adds server-side customer confirmation and internal lead notification emails after the private lead has been saved. The frontend has no Resend dependency or credential. Admin screens still use mock data; no admin authentication, real admin CRUD, or notes editing is added.
 
 ## Function configuration
@@ -47,7 +49,7 @@ Keep `ALLOWED_ORIGINS=http://localhost:3000` for the existing local flow. Existi
 
 Email errors never delete, update, or roll back the saved lead. Both thrown errors and Resend's returned `error` result are handled. An absent provider acceptance ID also counts as an email failure. A provider acceptance log means the send API accepted the message; it does not prove inbox delivery. A timeout can leave provider acceptance uncertain.
 
-Appwrite `log` records which operation was accepted; Appwrite `error` records which operation failed or was skipped. Diagnostics whitelist scalar name/message/code/status/type fields, redact the configured Resend key and request credentials, remove control characters, and limit diagnostic length. Raw response objects, stacks, headers, environment dumps, and credentials are never logged or sent to the browser. A logging failure cannot change a saved enquiry's response.
+Appwrite `log` records which operation was accepted; Appwrite `error` records which operation failed or was skipped. Diagnostics include only fixed operation/failure descriptions, internally selected missing/invalid configuration variable names and integer HTTP codes in 100-599. Arbitrary exception name/message/type, customer email/phone/message, raw responses, stacks, headers, environment dumps and credentials are never logged or returned. No redaction framework is required. A logging failure cannot change a saved enquiry's response. Configured sender/admin addresses must each be a valid single bare mailbox; invalid sender skips both operations, while invalid admin recipient skips only the admin operation after the lead is saved.
 
 ## Templates and dependency
 

@@ -12,7 +12,7 @@ const failure = { success: false, message: "Unable to submit your enquiry right 
 const success = { success: true, message: "Thank you! Your enquiry has been submitted successfully." };
 const payload = {
   name: "Test Person", email: "test@example.com", phone: "+91 9876543210",
-  company: "", service: "Web Development", message: "Please build a website.", source: "StackNova Website",
+  company: "", service: "Web Development", message: "Please build a website.",
 };
 function client({ url = "https://enquiry-test.invalid", fetch = async () => { throw new Error("internal URL secret"); }, ...globals } = {}) {
   const sandbox = { exports: {}, URL, AbortController, setTimeout, clearTimeout, fetch,
@@ -71,8 +71,10 @@ test("malformed JSON, invalid shapes, unexpected messages, and non-2xx responses
   for (const response of responses) {
     assert.deepEqual(plain(await client({ fetch: async () => response }).submitEnquiry(payload)), failure);
   }
-  const validation = { success: false, message: "Please enter a valid email address." };
-  assert.deepEqual(plain(await client({ fetch: async () => ({ status: 400, json: async () => validation }) }).submitEnquiry(payload)), validation);
+  for (const message of ["Invalid enquiry details.", "Please enter a valid email address."]) {
+    const validation = { success: false, message };
+    assert.deepEqual(plain(await client({ fetch: async () => ({ status: 400, json: async () => validation }) }).submitEnquiry(payload)), validation);
+  }
 });
 
 test("timeout feedback safely warns that receipt could not be confirmed", async () => {
@@ -88,17 +90,24 @@ test("frontend and Function agree on trimming, formats, controls, services, and 
   const cases = [payload,
     Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, "  " + value + "  "])),
     ...["name", "email", "phone", "service", "message"].map((field) => ({ ...payload, [field]: " \n\t " })),
-    ...["bad-email", "a@@example.com", "a b@example.com"].map((email) => ({ ...payload, email })),
+    ...["bad-email", "a@@example.com", "a b@example.com", "test@example.com\r\n", "<test@example.com>",
+      "test@example.com,example.net", "test@example.com;example.net", ".test@example.com", "test.@example.com",
+      "te..st@example.com", "t".repeat(65) + "@example.com", "t@" + "a".repeat(64) + ".com"].map((email) => ({ ...payload, email })),
     ...["123", "1234567890123456", "CALL-NOW", "(123) 456-7890"].map((phone) => ({ ...payload, phone })),
     { ...payload, service: "unsupported" }, { ...payload, name: "a\nb" },
     { ...payload, company: "a\tb" }, { ...payload, message: "bad\u0000text" },
     { ...payload, message: "valid\nmultiline\tmessage" },
+    ...["name", "email", "phone", "company", "service"].flatMap(field =>
+      ["\r\n", "\u0085", "\u2028", "\u2029"].map(control => ({ ...payload, [field]: control + payload[field] }))),
+    ...["name", "email", "phone", "company", "service", "message"].flatMap(field =>
+      [null, [], {}, 123, true].map(value => ({ ...payload, [field]: value }))),
+    { ...payload, message: "\u000bvalid text" },
     ...api.enquiryServices.map((service) => ({ ...payload, service })),
   ];
   const boundaryValues = {
-    name: "n".repeat(100), email: "e".repeat(242) + "@example.com",
+    name: "n".repeat(100), email: "e".repeat(64) + "@" + ["a".repeat(63), "b".repeat(63), "c".repeat(61)].join("."),
     phone: "+" + " ".repeat(16) + "123456789012345", company: "c".repeat(150),
-    message: "m".repeat(4000), source: "s".repeat(100),
+    message: "m".repeat(4000),
   };
   for (const [field, value] of Object.entries(boundaryValues)) {
     cases.push({ ...payload, [field]: value }, { ...payload, [field]: value + "x" });

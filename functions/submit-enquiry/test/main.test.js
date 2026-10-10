@@ -8,23 +8,33 @@ const env = {
   APPWRITE_FUNCTION_API_ENDPOINT: "https://appwrite-test.invalid/v1",
   APPWRITE_FUNCTION_PROJECT_ID: "test-project",
   ALLOWED_ORIGINS: "http://localhost:3000",
+  RESEND_API_KEY: "synthetic-resend-key", RESEND_FROM_EMAIL: "sender@example.com",
+  STACKNOVA_LEADS_EMAIL: "leads@example.com",
 };
 const payload = {
   name: "  Rahul Sharma  ", email: "  rahul@example.com  ", phone: " +91 9876543210 ",
   company: " ABC Technologies ", service: " Web Development ",
-  message: " I need a website for my business. ", source: " untrusted source ",
+  message: " I need a website for my business. ",
 };
 
-async function invoke({ body = payload, bodyText, method = "POST", headers = {}, config = env, fail = false, useSDK = false } = {}) {
+async function invoke(options = {}) {
+  const { body = payload, bodyText, method = "POST", headers = {}, config = env, fail = false, useSDK = false } = options;
   const writes = [];
   const logs = [];
+  const emails = [];
+  let initialized = 0;
   const writeLead = async (input) => {
     writes.push(input);
     if (fail) throw fail === true ? new Error("internal-database-error") : fail;
   };
-  const handler = createHandler({ env: config, ...(useSDK ? {} : { writeLead }) });
+  const handler = createHandler({ env: config, ...(useSDK ? {} : { writeLead }),
+    createEmailClient: () => {
+      initialized++;
+      return { emails: { send: async email => { emails.push(email); return { data: { id: "synthetic-email" } }; } } };
+    },
+  });
   const response = await handler({
-    req: { method, bodyText: bodyText ?? JSON.stringify(body), headers: {
+    req: { method, bodyText: Object.hasOwn(options, "bodyText") ? bodyText : JSON.stringify(body), headers: {
       origin: "http://localhost:3000", "content-type": "application/json",
       "x-appwrite-key": "fake-execution-key", ...headers,
     } },
@@ -34,7 +44,14 @@ async function invoke({ body = payload, bodyText, method = "POST", headers = {},
     },
     error: (message) => logs.push(message),
   });
-  return { ...response, writes, logs };
+  // All request/config rejections must precede both storage and email work.
+  if ((response.status >= 400 && response.status < 500) || (response.status === 500 && !fail && !useSDK)) {
+    assert.equal(writes.length, 0);
+    assert.equal(emails.length, 0);
+    assert.equal(initialized, 0);
+  }
+  if (response.status === 400) assert.deepEqual(response.body, { success: false, message: "Invalid enquiry details." });
+  return { ...response, writes, logs, emails, initialized };
 }
 
 test("valid enquiry is trimmed, server-owned fields are assigned, and exactly one write occurs", async () => {
@@ -53,8 +70,8 @@ test("valid enquiry is trimmed, server-owned fields are assigned, and exactly on
   assert.equal(result.headers.Vary, "Origin");
 });
 
-test("optional company and source can be omitted", async () => {
-  const { company, source, ...body } = payload;
+test("optional company can be omitted and source remains server-owned", async () => {
+  const { company, ...body } = payload;
   const result = await invoke({ body });
   assert.equal(result.status, 201);
   assert.equal(result.writes[0].data.company, "");
@@ -93,7 +110,7 @@ test("missing, blank, invalid, long, or non-string fields never writes", async (
 });
 
 test("privileged and unexpected fields never writes", async () => {
-  for (const field of ["status", "notes", "deletedAt", "createdAt", "updatedAt", "$id", "$createdAt", "$updatedAt", "$permissions", "databaseId", "tableId", "__proto__", "extra"]) {
+  for (const field of ["source", "budget", "cc", "bcc", "from", "replyTo", "headers", "status", "notes", "deletedAt", "createdAt", "updatedAt", "$id", "$createdAt", "$updatedAt", "$permissions", "databaseId", "tableId", "__proto__", "extra"]) {
     const result = await invoke({ body: { ...payload, [field]: "Converted" } });
     assert.equal(result.status, 400);
     assert.equal(result.writes.length, 0);
@@ -173,7 +190,7 @@ for (const key of ["DATABASE_ID", "LEADS_TABLE_ID", "APPWRITE_FUNCTION_API_ENDPO
   });
 }
 
-test("database failures log diagnostic fields but return only safe 500 and do not retry", async () => {
+test("database failures log only numeric status fields and return safe 500 without retry", async () => {
   const failure = Object.assign(new Error('Invalid document structure: Unknown attribute: "deletedAt"'), {
     name: "AppwriteException", code: 400, status: 400, type: "document_invalid_structure",
     response: { secret: "never-log-this" },
@@ -183,20 +200,20 @@ test("database failures log diagnostic fields but return only safe 500 and do no
   assert.equal(result.writes.length, 1);
   assert.deepEqual(result.body, { success: false, message: "Unable to submit your enquiry right now." });
   assert.deepEqual(result.logs, [`Enquiry submission failed: ${JSON.stringify({
-    name: failure.name, message: failure.message, code: 400, status: 400, type: failure.type,
+    category: "operation_failed", code: 400, status: 400,
   })}`]);
   assert.ok(!JSON.stringify(result.body).includes(failure.message));
   assert.ok(!result.logs[0].includes("never-log-this"));
 });
 
-test("diagnostic fields redact runtime keys and request credentials", async () => {
+test("diagnostics omit arbitrary exception text and request credentials", async () => {
   const failure = new Error("Failure with fake-execution-key, fake-user-jwt, Bearer fake-authorization, session=fake-cookie");
   const result = await invoke({ fail: failure, headers: {
     "x-appwrite-user-jwt": "fake-user-jwt", authorization: "Bearer fake-authorization", cookie: "session=fake-cookie",
   } });
   assert.equal(result.status, 500);
   assert.deepEqual(result.body, { success: false, message: "Unable to submit your enquiry right now." });
-  assert.ok(result.logs[0].includes("Failure with [REDACTED], [REDACTED], [REDACTED], [REDACTED]"));
+  assert.deepEqual(result.logs, ['Enquiry submission failed: {"category":"operation_failed"}']);
   for (const credential of ["fake-execution-key", "fake-user-jwt", "fake-authorization", "fake-cookie"]) {
     assert.ok(!result.logs[0].includes(credential));
   }
@@ -253,7 +270,7 @@ test("production SDK sends one private create with runtime credentials and fixed
   }
 });
 
-test("production SDK createRow failure logs the actual Appwrite exception without returning it", async () => {
+test("production SDK createRow failure keeps only numeric code, never raw Appwrite text", async () => {
   const originalDispatcher = getGlobalDispatcher();
   const agent = new MockAgent();
   agent.disableNetConnect();
@@ -270,10 +287,10 @@ test("production SDK createRow failure logs the actual Appwrite exception withou
     assert.deepEqual(result.body, { success: false, message: "Unable to submit your enquiry right now." });
     assert.equal(result.logs.length, 1);
     const diagnostics = JSON.parse(result.logs[0].slice("Enquiry submission failed: ".length));
-    assert.equal(diagnostics.name, "AppwriteException");
-    assert.equal(diagnostics.message, message);
+    assert.equal(diagnostics.category, "operation_failed");
+    assert.equal(Object.hasOwn(diagnostics, "message"), false);
     assert.equal(diagnostics.code, 400);
-    assert.equal(diagnostics.type, "document_invalid_structure");
+    assert.equal(Object.hasOwn(diagnostics, "type"), false);
     assert.ok(!result.logs[0].includes("fake-execution-key"));
     assert.ok(!JSON.stringify(result.body).includes(message));
     agent.assertNoPendingInterceptors();
@@ -311,4 +328,145 @@ test("the final message including budget must stay within 4000 characters", asyn
   const rejected = await invoke({ body: { ...payload, message: "m" + validMessage } });
   assert.equal(rejected.status, 400);
   assert.equal(rejected.writes.length, 0);
+});
+
+test("missing, non-text, blank and malformed runtime bodies are rejected before any side effect", async () => {
+  for (const bodyText of [undefined, null, 123, {}, [], "", "   \r\n\t", "{", "null", "[]", "42", "true", '"text"']) {
+    assert.equal((await invoke({ bodyText })).status, 400);
+  }
+});
+
+for (const field of ["name", "email", "phone", "company", "service", "message"]) {
+  test(`${field} rejects every non-string JSON type with no write, send or client initialization`, async () => {
+    for (const value of [null, [], ["hello"], {}, 123, true, false]) {
+      assert.equal((await invoke({ body: { ...payload, [field]: value } })).status, 400);
+    }
+  });
+}
+
+for (const field of ["name", "email", "phone", "service", "message"]) {
+  test(`${field} is required and cannot be whitespace-only`, async () => {
+    const body = { ...payload };
+    delete body[field];
+    assert.equal((await invoke({ body })).status, 400);
+    for (const value of ["", "   "]) assert.equal((await invoke({ body: { ...payload, [field]: value } })).status, 400);
+  });
+}
+
+const maxEmail = "e".repeat(64) + "@" + ["a".repeat(63), "b".repeat(63), "c".repeat(61)].join(".");
+const boundaryValues = {
+  name: "n".repeat(100), email: maxEmail, phone: "+" + " ".repeat(16) + "123456789012345",
+  company: "c".repeat(150), message: "m".repeat(4000),
+};
+for (const [field, value] of Object.entries(boundaryValues)) {
+  test(`${field} accepts its exact limit and rejects overflow without truncating`, async () => {
+    const accepted = await invoke({ body: { ...payload, [field]: value } });
+    assert.equal(accepted.status, 201);
+    assert.equal(accepted.writes[0].data[field], value);
+    assert.equal(accepted.emails.length, 2);
+    const overflow = field === "phone" ? "+ " + value.slice(1) : value + "x";
+    assert.equal((await invoke({ body: { ...payload, [field]: overflow } })).status, 400);
+  });
+}
+
+test("service rejects overflow and permits only the six existing UI choices", async () => {
+  for (const service of ["Web Development", "Software Engineering", "UI/UX Design", "Cloud & Infrastructure", "Product Modernization", "Other"]) {
+    assert.equal((await invoke({ body: { ...payload, service } })).status, 201);
+  }
+  for (const service of ["s".repeat(101), "unsupported", "web development"]) {
+    assert.equal((await invoke({ body: { ...payload, service } })).status, 400);
+  }
+});
+
+for (const field of ["name", "email", "phone", "company", "service"]) {
+  test(`${field} rejects C0, DEL/C1 and Unicode separators before trim at every position`, async () => {
+    const controls = [...Array.from({ length: 32 }, (_, i) => String.fromCharCode(i)),
+      ...Array.from({ length: 33 }, (_, i) => String.fromCharCode(127 + i)), "\u2028", "\u2029"];
+    for (const control of controls) {
+      for (const value of [control + payload[field], payload[field] + control, "a" + control + "b"]) {
+        assert.equal((await invoke({ body: { ...payload, [field]: value } })).status, 400);
+      }
+    }
+  });
+}
+
+test("message preserves multiline Unicode/punctuation but rejects unsafe raw controls", async () => {
+  const message = '<website> Tom & Jerry "quoted text" it\'s fine\r\nNext\nTabbed\ttext\rUnicode: नमस्ते 😀\u2028End';
+  const accepted = await invoke({ body: { ...payload, name: "नमस्ते & Friends", message } });
+  assert.equal(accepted.status, 201);
+  assert.equal(accepted.writes[0].data.message, message);
+  const controls = [...Array.from({ length: 32 }, (_, i) => i).filter(i => ![9, 10, 13].includes(i)),
+    ...Array.from({ length: 33 }, (_, i) => i + 127)];
+  for (const code of controls) {
+    for (const value of [String.fromCharCode(code) + "text", "text" + String.fromCharCode(code)]) {
+      assert.equal((await invoke({ body: { ...payload, message: value } })).status, 400);
+    }
+  }
+});
+
+test("email rejects header/display/list syntax and malformed mailbox structure", async () => {
+  const invalid = ["test@example.com\r\n", "\r\ntest@example.com", "test@example.com\r\nBcc: hidden@example.com",
+    "<test@example.com>", "Person <test@example.com>", "test@example.com,other@example.com",
+    "test@example.com,example.net", "test@example.com;example.net", "a b@example.com", "a\u0085@example.com",
+    ".test@example.com", "test.@example.com", "te..st@example.com", "a@-example.com", "a@example-.com",
+    "a@example..com", "a@example", "a@@example.com", "a@" + "b".repeat(64) + ".com", "a".repeat(65) + "@example.com"];
+  for (const email of invalid) assert.equal((await invoke({ body: { ...payload, email } })).status, 400);
+  for (const email of ["person+project@example.com", "o'connor@example.co.in", "Test.Person@example-domain.com"]) {
+    const accepted = await invoke({ body: { ...payload, email: "  " + email + "  " } });
+    assert.equal(accepted.status, 201);
+    assert.equal(accepted.emails[0].to, email);
+    assert.equal(accepted.emails[1].replyTo, email);
+  }
+});
+
+test("optional company accepts omitted, empty and spaces but never null", async () => {
+  for (const company of [undefined, "", "   "]) {
+    const accepted = await invoke({ body: { ...payload, company } });
+    assert.equal(accepted.status, 201);
+    assert.equal(accepted.writes[0].data.company, "");
+  }
+});
+
+test("configured localhost and production origins get exact CORS on POST and OPTIONS", async () => {
+  const config = { ...env, ALLOWED_ORIGINS: "http://localhost:3000,https://stacknova.in,https://www.stacknova.in" };
+  for (const origin of config.ALLOWED_ORIGINS.split(",")) {
+    for (const method of ["POST", "OPTIONS"]) {
+      const result = await invoke({ config, method, headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "Content-Type" } });
+      assert.equal(result.status, method === "POST" ? 201 : 204);
+      assert.equal(result.headers["Access-Control-Allow-Origin"], origin);
+      assert.equal(result.headers.Vary, "Origin");
+      if (method === "OPTIONS") {
+        assert.equal(result.writes.length, 0);
+        assert.equal(result.emails.length, 0);
+        assert.equal(result.initialized, 0);
+      }
+    }
+  }
+  for (const origin of ["https://stacknova.in.evil.example", "https://evil.example", "*", "null"]) {
+    const result = await invoke({ config, method: "OPTIONS", headers: { origin, "access-control-request-method": "POST" } });
+    assert.equal(result.status, 403);
+    assert.equal(result.headers["Access-Control-Allow-Origin"], undefined);
+  }
+});
+
+test("total limit measures UTF-8 bytes and accepts exactly 32 KiB", async () => {
+  const body = JSON.stringify({ ...payload, message: "字".repeat(4000) });
+  const exact = body + " ".repeat(32768 - Buffer.byteLength(body, "utf8"));
+  assert.equal((await invoke({ bodyText: exact })).status, 201);
+  assert.equal((await invoke({ bodyText: exact + " " })).status, 413);
+});
+
+test("internal responses and logs cannot expose customer, configuration or arbitrary exception data", async () => {
+  const sensitive = [...Object.values(env), "fake-execution-key", payload.email.trim(), payload.phone.trim(), payload.message.trim(), "private-stack", "raw-provider"];
+  const failure = Object.assign(new Error(sensitive.join(" ")), {
+    name: sensitive.join(" "), type: sensitive.join(" "), status: NaN, statusCode: Infinity,
+    code: 9876543210, stack: "private-stack", response: "raw-provider",
+  });
+  const result = await invoke({ fail: failure });
+  assert.equal(result.status, 500);
+  assert.equal(result.emails.length, 0);
+  assert.equal(result.initialized, 0);
+  assert.deepEqual(result.logs, ['Enquiry submission failed: {"category":"operation_failed"}']);
+  const observable = JSON.stringify({ body: result.body, logs: result.logs });
+  for (const value of sensitive) assert.ok(!observable.includes(value));
 });

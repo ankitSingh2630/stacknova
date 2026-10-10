@@ -3,7 +3,10 @@ import { Resend } from "resend";
 import { buildCustomerLogoAttachment } from "./email-assets.js";
 import { buildCustomerConfirmationEmail, buildAdminLeadEmail } from "./email-templates.js";
 
-const limits = { name: 100, email: 254, phone: 32, company: 150, service: 100, message: 4000, source: 100 };
+const limits = { name: 100, email: 254, phone: 32, company: 150, service: 100, message: 4000 };
+const singleLineControls = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
+const messageControls = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/;
+const invalidMessage = "Invalid enquiry details.";
 const services = new Set([
   "Web Development", "Software Engineering", "UI/UX Design",
   "Cloud & Infrastructure", "Product Modernization", "Other",
@@ -11,14 +14,31 @@ const services = new Set([
 const maxBodyBytes = 32 * 1024;
 const failureMessage = "Unable to submit your enquiry right now.";
 
+// Practical single bare mailbox, not an RFC parser. Never accepts header/list syntax.
+function validEmail(value) {
+  return typeof value === "string" && value.length <= limits.email && !singleLineControls.test(value) &&
+    /^[A-Za-z0-9.!#$%&'*+\-/=?^_`{|}~]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(value) &&
+    value.indexOf("@") <= 64 && !value.startsWith(".") && !value.includes("..") && !value.includes(".@") &&
+    value.split("@")[1].split(".").every(label => label.length <= 63);
+}
+
+// Only internally selected variable names may enter configuration diagnostics.
+class ConfigurationError extends Error {
+  constructor(keys, invalid = false) {
+    super(`${invalid ? "Invalid" : "Missing"} configuration: ${keys.join(", ")}`);
+  }
+}
+
 function allowedOrigins(value) {
-  if (!value?.trim()) throw new Error("Missing configuration: ALLOWED_ORIGINS");
+  if (typeof value !== "string" || !value.trim()) throw new ConfigurationError(["ALLOWED_ORIGINS"]);
   return new Set(value.split(",").map((entry) => {
     const origin = entry.trim();
-    const url = new URL(origin);
+    let url;
+    try { url = new URL(origin); }
+    catch { throw new ConfigurationError(["ALLOWED_ORIGINS"], true); }
     if (url.origin !== origin || url.username || url.password ||
         !(url.protocol === "https:" || (url.protocol === "http:" && url.hostname === "localhost"))) {
-      throw new Error("Invalid origin configuration");
+      throw new ConfigurationError(["ALLOWED_ORIGINS"], true);
     }
     return origin;
   }));
@@ -26,42 +46,36 @@ function allowedOrigins(value) {
 
 function validate(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return { message: "Please send a valid enquiry." };
+    return null;
   }
   // Allow only public fields, never caller-supplied state, IDs, timestamps, or permissions.
   if (Object.keys(body).some((key) => !Object.hasOwn(limits, key))) {
-    return { message: "The enquiry contains unsupported fields." };
+    return null;
   }
   const data = {};
   for (const [field, limit] of Object.entries(limits)) {
-    const optional = field === "company" || field === "source";
+    const optional = field === "company";
     const input = body[field];
     if (input === undefined && optional) {
       data[field] = "";
       continue;
     }
-    if (typeof input !== "string") return { message: `Please enter ${field}.` };
+    if (typeof input !== "string") return null;
+    // Check the original input: trim must not hide header controls at either end.
+    if ((field === "message" ? messageControls : singleLineControls).test(input)) return null;
     const value = input.trim();
-    if (!optional && !value) return { message: `Please enter ${field}.` };
-    if (value.length > limit) return { message: `${field} must be ${limit} characters or fewer.` };
-    // Allow multiline messages; reject control characters elsewhere and unsafe controls everywhere.
-    if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value) ||
-        (field !== "message" && /[\r\n\t]/.test(value))) {
-      return { message: "The enquiry contains invalid characters." };
-    }
+    if ((!optional && !value) || value.length > limit) return null;
     data[field] = value;
   }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
-    return { message: "Please enter a valid email address." };
-  }
+  if (!validEmail(data.email)) return null;
   const digits = data.phone.replace(/\D/g, "").length;
   if (!/^\+?[0-9 ()-]+$/.test(data.phone) || digits < 7 || digits > 15) {
-    return { message: "Please enter a valid phone number with 7–15 digits." };
+    return null;
   }
-  if (!services.has(data.service)) return { message: "Please select a supported project type." };
+  if (!services.has(data.service)) return null;
   data.source = "StackNova Website";
   data.status = "New";
-  return { data };
+  return data;
 }
 
 function verifyConfiguration(req, env) {
@@ -70,26 +84,19 @@ function verifyConfiguration(req, env) {
   ].filter((key) => typeof env[key] !== "string" || !env[key].trim());
   const runtimeKey = req.headers["x-appwrite-key"];
   if (typeof runtimeKey !== "string" || !runtimeKey.trim()) missing.push("x-appwrite-key");
-  if (missing.length) throw new Error(`Missing configuration: ${missing.join(", ")}`);
+  if (missing.length) throw new ConfigurationError(missing);
 }
 
-function errorDetails(exception, req, env) {
-  // Whitelist scalar diagnostics, never serialize the exception, response, or request.
-  const credentials = ["x-appwrite-key", "x-appwrite-user-jwt", "authorization", "cookie"]
-    .map((header) => req.headers[header]);
-  credentials.push(env.RESEND_API_KEY);
-  const secrets = credentials.filter((value) => typeof value === "string" && value);
-  const details = {};
-  for (const field of ["name", "message", "code", "status", "statusCode", "type"]) {
+function errorDetails(exception) {
+  if (exception instanceof ConfigurationError) return exception.message;
+  // Provider text can contain customer data. Keep only fixed categories and HTTP codes.
+  const details = { category: "operation_failed" };
+  for (const field of ["code", "status", "statusCode"]) {
     const value = exception?.[field];
-    if (typeof value === "string") {
-      details[field] = secrets.reduce((text, credential) => text.replaceAll(credential, "[REDACTED]"), value)
-        .replace(/[\u0000-\u001F\u007F]/g, " ").slice(0, 1000);
-    } else if (typeof value === "number") {
+    if (Number.isInteger(value) && value >= 100 && value <= 599) {
       details[field] = value;
     }
   }
-  if (!Object.keys(details).length) details.message = "Unknown error";
   return JSON.stringify(details);
 }
 
@@ -98,7 +105,7 @@ function report(logger, message) {
   try { logger?.(message); } catch { /* Appwrite logging is best effort. */ }
 }
 
-async function sendLeadEmails({ req, env, data, createEmailClient, log, error }) {
+async function sendLeadEmails({ env, data, createEmailClient, log, error }) {
   let client;
   const operations = [
     { name: "Customer confirmation", keys: ["RESEND_API_KEY", "RESEND_FROM_EMAIL"],
@@ -110,7 +117,9 @@ async function sendLeadEmails({ req, env, data, createEmailClient, log, error })
   ];
   const outcomes = await Promise.allSettled(operations.map(async (operation) => {
     const missing = operation.keys.filter((key) => typeof env[key] !== "string" || !env[key].trim());
-    if (missing.length) throw new Error(`Missing configuration: ${missing.join(", ")}`);
+    if (missing.length) throw new ConfigurationError(missing);
+    const invalid = operation.keys.filter(key => key !== "RESEND_API_KEY" && !validEmail(env[key]));
+    if (invalid.length) throw new ConfigurationError(invalid, true);
     // This helper is called only after writeLead resolves. No client exists before then.
     client ??= createEmailClient(env.RESEND_API_KEY);
     const result = await client.emails.send(operation.build(), { signal: AbortSignal.timeout(8000) });
@@ -120,7 +129,7 @@ async function sendLeadEmails({ req, env, data, createEmailClient, log, error })
   outcomes.forEach((outcome, index) => {
     const name = operations[index].name;
     if (outcome.status === "fulfilled") report(log, `${name} email accepted by provider.`);
-    else report(error, `${name} email failed or skipped: ${errorDetails(outcome.reason, req, env)}`);
+    else report(error, `${name} email failed or skipped: ${errorDetails(outcome.reason)}`);
   });
 }
 
@@ -166,25 +175,25 @@ export function createHandler({ env = process.env, writeLead = createLead,
       if ((req.headers["content-type"] || "").split(";")[0].trim().toLowerCase() !== "application/json") {
         return reply(415, "Please send your enquiry as JSON.");
       }
-      if (typeof req.bodyText !== "string") return reply(400, "Please send valid JSON.");
+      if (typeof req.bodyText !== "string") return reply(400, invalidMessage);
       if (Buffer.byteLength(req.bodyText, "utf8") > maxBodyBytes) {
         return reply(413, "Your enquiry is too large.");
       }
       let body;
       try { body = JSON.parse(req.bodyText); }
-      catch { return reply(400, "Please send valid JSON."); }
+      catch { return reply(400, invalidMessage); }
       const result = validate(body);
-      if (result.message) return reply(400, result.message);
+      if (!result) return reply(400, invalidMessage);
       verifyConfiguration(req, env);
       // Exactly one private create; never attempt email before this completes successfully.
-      await writeLead({ req, env, data: result.data });
-      data = result.data;
+      await writeLead({ req, env, data: result });
+      data = result;
     } catch (exception) {
-      report(error, `Enquiry submission failed: ${errorDetails(exception, req, env)}`);
+      report(error, `Enquiry submission failed: ${errorDetails(exception)}`);
       return reply(500, failureMessage);
     }
     // Database storage is primary. Email/configuration failures cannot enter the 500 path above.
-    try { await sendLeadEmails({ req, env, data, createEmailClient, log, error }); }
+    try { await sendLeadEmails({ env, data, createEmailClient, log, error }); }
     catch { report(error, "Email processing failed after lead was saved."); }
     return res.json({
       success: true, message: "Thank you! Your enquiry has been submitted successfully.",
